@@ -42,6 +42,8 @@ export interface Game {
   rewards: Reward[];
   stats: GameStat[];
   leaderboard: LeaderboardEntry[];
+  integrationStatus?: "embedded" | "scaffolded";
+  integrationNotes?: string;
 }
 
 export interface UserProfile {

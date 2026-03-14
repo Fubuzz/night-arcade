@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Orbit Drop</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <section class="hud-top">
+      <div class="brand-block">
+        <p class="eyebrow">Night Game #1</p>
+        <h1>Orbit Drop</h1>
+        <p class="tagline">Thread a falling core through rotating orbit gates, chain clean drops, and survive long enough to own the lane.</p>
+      </div>
+      <div class="stat-row">
+        <div class="stat-card player-card">
+          <span class="label">Player</span>
+          <strong id="playerValue">Guest</strong>
+        </div>
+        <div class="stat-card">
+          <span class="label">Score</span>
+          <strong id="scoreValue">0</strong>
+        </div>
+        <div class="stat-card desktop-stat">
+          <span class="label">Best</span>
+          <strong id="bestValue">0</strong>
+        </div>
+        <div class="stat-card combo-card desktop-stat">
+          <span class="label">Chain</span>
+          <strong id="comboValue">x1</strong>
+        </div>
+        <div class="stat-card phase-card desktop-stat">
+          <span class="label">Speed</span>
+          <strong id="phaseValue">Calm Orbit</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="game-panel">
+      <canvas id="gameCanvas" width="1080" height="1350" aria-label="Orbit Drop game canvas"></canvas>
+
+      <div class="top-actions">
+        <button id="homeButton" class="ghost-button">Quit / Home</button>
+        <button id="restartTopButton" class="ghost-button accent">Restart</button>
+      </div>
+
+      <div class="event-banner" id="eventBanner">Tap or press space to flip horizontal drift. Pass through the glowing gate opening.</div>
+
+      <div class="overlay visible" id="startOverlay">
+        <div class="overlay-card hero-card">
+          <p class="overlay-kicker">Arcade drop</p>
+          <h2>Flip the core left and right. Thread the opening. Keep the chain alive.</h2>
+          <p class="hero-summary">Cleanly built for Night Arcade: fast retries, readable mobile play, and local score persistence on this device.</p>
+
+          <label class="field-block" for="playerNameInput">
+            <span>Player name</span>
+            <input id="playerNameInput" type="text" maxlength="18" placeholder="Ahmed" autocomplete="nickname" />
+          </label>
+
+          <div class="button-row start-actions">
+            <button id="startButton" class="primary-button">Start Run</button>
+          </div>
+
+          <details class="mobile-help">
+            <summary>How to play</summary>
+            <div class="feature-grid compact-grid">
+              <div class="feature-card"><span>Move</span> Tap, click, or press Space to swap drift direction</div>
+              <div class="feature-card"><span>Goal</span> Drop through the gap in each rotating orbit ring</div>
+              <div class="feature-card"><span>Chain</span> Perfect center passes build score faster</div>
+              <div class="feature-card"><span>Fail state</span> Clip the solid ring and the run ends instantly</div>
+            </div>
+          </details>
+
+          <div class="leaderboard-card">
+            <div class="leaderboard-head">
+              <p class="overlay-kicker">Local leaderboard</p>
+              <span id="leaderboardHint">Top 5 runs on this device</span>
+            </div>
+            <ol id="leaderboardList" class="leaderboard-list"></ol>
+          </div>
+
+          <p class="tiny-note">Designed portrait-first so mobile feels intentional instead of squeezed into a fake desktop frame.</p>
+        </div>
+      </div>
+
+      <div class="overlay" id="pauseOverlay">
+        <div class="overlay-card small-card">
+          <p class="overlay-kicker">Paused</p>
+          <h2>Hold the orbit.</h2>
+          <p class="result-line">Jump back in when you're ready.</p>
+          <div class="button-stack">
+            <button id="resumeButton" class="primary-button">Resume</button>
+            <button id="pauseRestartButton" class="secondary-button">Restart</button>
+            <button id="pauseHomeButton" class="ghost-button wide">Quit to Home</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="overlay" id="gameOverOverlay">
+        <div class="overlay-card small-card">
+          <p class="overlay-kicker">Run over</p>
+          <h2 id="gameOverTitle">You clipped the ring.</h2>
+          <p class="result-line"><span id="finalPlayer">Guest</span>, final score <strong id="finalScore">0</strong></p>
+          <p class="result-line">Session best <strong id="finalBest">0</strong></p>
+          <p class="result-line" id="rankLine">Leaderboard update pending</p>
+          <div class="button-stack">
+            <button id="restartButton" class="primary-button">Drop Again</button>
+            <button id="gameOverHomeButton" class="ghost-button wide">Quit to Home</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="footer-bar">
+      <div class="pill">One-button control</div>
+      <div class="pill">Rotating ring timing</div>
+      <div class="pill">Combo scoring</div>
+      <div class="pill accent">Portrait-friendly arcade drop</div>
+    </section>
+
+    <section class="mobile-dock" aria-label="Compact mobile run stats">
+      <div class="dock-chip">
+        <span class="label">Best</span>
+        <strong id="bestDockValue">0</strong>
+      </div>
+      <div class="dock-chip combo-card">
+        <span class="label">Chain</span>
+        <strong id="comboDockValue">x1</strong>
+      </div>
+      <div class="dock-chip phase-card">
+        <span class="label">Speed</span>
+        <strong id="phaseDockValue">Calm Orbit</strong>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

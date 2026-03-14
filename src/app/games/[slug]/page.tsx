@@ -1,9 +1,9 @@
 import { notFound } from "next/navigation";
 import { SiteShell } from "@/components/layout/site-shell";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/panel";
 import { LeaderboardTable } from "@/components/games/leaderboard-table";
+import { GameEmbed } from "@/components/games/game-embed";
 import { getGameBySlug } from "@/lib/data";
 import { statusLabel } from "@/lib/utils";
 
@@ -48,24 +48,7 @@ export default async function GameDetailPage({
           </div>
         </Panel>
 
-        <Panel className="p-6 sm:p-8">
-          <p className="text-sm font-medium tracking-[0.28em] uppercase text-cyan-200/78">Play surface</p>
-          <div className={`mt-5 flex min-h-[320px] items-center justify-center rounded-[2rem] border border-white/10 bg-linear-to-br ${game.accent} p-[1px]`}>
-            <div className="flex min-h-[318px] w-full items-center justify-center rounded-[calc(2rem-1px)] bg-slate-950/92 px-6 text-center">
-              <div>
-                <p className="text-sm uppercase tracking-[0.28em] text-white/48">Future mount point</p>
-                <h2 className="mt-4 text-3xl font-semibold text-white">Embedded game shell</h2>
-                <p className="mt-3 max-w-md text-sm leading-6 text-white/58">
-                  Ready for iframe, canvas, or custom runtime integration without reworking the surrounding platform UI.
-                </p>
-                <div className="mt-6 flex justify-center gap-3">
-                  <Button variant="secondary">Launch preview</Button>
-                  <Button href="/auth">Save progress</Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </Panel>
+        <GameEmbed game={game} />
       </section>
 
       <section className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">

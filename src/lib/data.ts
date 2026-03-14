@@ -56,6 +56,8 @@ export const games: Game[] = [
     averageSession: "04m 12s",
     playersThisWeek: "1,284",
     rewards: [rewards.gravityAce, rewards.neonTrail, rewards.firstClear],
+    integrationStatus: "embedded",
+    integrationNotes: "Embedded as a portrait-first playable cabinet inside the Night Arcade shell.",
     stats: [
       { label: "Best Combo", value: "42x", hint: "Current top public chain" },
       { label: "Perfect Drops", value: "128", hint: "Most clean landings in one run" },
@@ -85,6 +87,8 @@ export const games: Game[] = [
     averageSession: "03m 08s",
     playersThisWeek: "912",
     rewards: [rewards.stackSaint, rewards.midnightSignal, rewards.neonTrail],
+    integrationStatus: "embedded",
+    integrationNotes: "Embedded from the existing standalone Stack Sprint build found in the workspace.",
     stats: [
       { label: "Top Tower", value: "31", hint: "Highest flawless floor count" },
       { label: "Avg Accuracy", value: "94%", hint: "Placement precision among top 100" },

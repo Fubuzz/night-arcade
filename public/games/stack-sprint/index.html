@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Stack Sprint</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <section class="hud-top">
+      <div class="brand-block">
+        <p class="eyebrow">Night Game #2</p>
+        <h1>Stack Sprint</h1>
+        <p class="tagline">Dash, dodge, collect, grab power-ups, and survive a lane that evolves fast instead of staying flat.</p>
+      </div>
+      <div class="stat-row">
+        <div class="stat-card player-card">
+          <span class="label">Player</span>
+          <strong id="playerValue">Guest</strong>
+        </div>
+        <div class="stat-card">
+          <span class="label">Score</span>
+          <strong id="scoreValue">0</strong>
+        </div>
+        <div class="stat-card desktop-stat">
+          <span class="label">Best</span>
+          <strong id="bestValue">0</strong>
+        </div>
+        <div class="stat-card combo-card desktop-stat">
+          <span class="label">Rush</span>
+          <strong id="comboValue">x1</strong>
+        </div>
+        <div class="stat-card phase-card desktop-stat">
+          <span class="label">Phase</span>
+          <strong id="phaseValue">Neon Warmup</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="game-panel">
+      <canvas id="gameCanvas" width="1280" height="720" aria-label="Stack Sprint game canvas"></canvas>
+
+      <div class="top-actions">
+        <button id="homeButton" class="ghost-button">Quit / Home</button>
+        <button id="restartTopButton" class="ghost-button accent">Restart</button>
+      </div>
+
+      <div class="event-banner" id="eventBanner">Thread the gaps. Grab sparks. Don’t hit crates.</div>
+
+      <div class="overlay visible" id="startOverlay">
+        <div class="overlay-card hero-card">
+          <div class="mobile-hero-copy">
+            <p class="overlay-kicker">Arcade runner</p>
+            <h2>Enter your name. Hit the lane. Survive a city that ramps up around you.</h2>
+            <p class="hero-summary">Mobile-first now: bigger play area, lighter chrome, and help that stays out of your way.</p>
+          </div>
+
+          <label class="field-block" for="playerNameInput">
+            <span>Player name</span>
+            <input id="playerNameInput" type="text" maxlength="18" placeholder="Ahmed" autocomplete="nickname" />
+          </label>
+
+          <div class="button-row start-actions">
+            <button id="startButton" class="primary-button">Start Run</button>
+          </div>
+
+          <details class="mobile-help">
+            <summary>How to play</summary>
+            <div class="feature-grid compact-grid">
+              <div class="feature-card">
+                <span>Jump</span>
+                Space / click / tap
+              </div>
+              <div class="feature-card">
+                <span>Dodge</span>
+                Crates and barriers arrive in seconds
+              </div>
+              <div class="feature-card">
+                <span>Reward loop</span>
+                Sparks, clears, fever, and power-ups stack into bigger scores
+              </div>
+              <div class="feature-card">
+                <span>Power-ups</span>
+                Shield, magnet, double score, and slow-mo can flip a run
+              </div>
+            </div>
+          </details>
+
+          <div class="leaderboard-card">
+            <div class="leaderboard-head">
+              <p class="overlay-kicker">Local leaderboard</p>
+              <span id="leaderboardHint">Top 5 runs on this device</span>
+            </div>
+            <ol id="leaderboardList" class="leaderboard-list"></ol>
+          </div>
+
+          <p class="tiny-note">Press P or Esc anytime to pause. On phones, help is tucked into a collapsible panel so the game area stays visible.</p>
+        </div>
+      </div>
+
+      <div class="overlay" id="pauseOverlay">
+        <div class="overlay-card small-card">
+          <p class="overlay-kicker">Paused</p>
+          <h2>Catch your breath.</h2>
+          <p class="result-line">Your lane is waiting.</p>
+          <div class="button-stack">
+            <button id="resumeButton" class="primary-button">Resume</button>
+            <button id="pauseRestartButton" class="secondary-button">Restart</button>
+            <button id="pauseHomeButton" class="ghost-button wide">Quit to Home</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="overlay" id="gameOverOverlay">
+        <div class="overlay-card small-card">
+          <p class="overlay-kicker">Run over</p>
+          <h2 id="gameOverTitle">You clipped a crate.</h2>
+          <p class="result-line"><span id="finalPlayer">Guest</span>, final score <strong id="finalScore">0</strong></p>
+          <p class="result-line">Session best <strong id="finalBest">0</strong></p>
+          <p class="result-line" id="rankLine">Leaderboard update pending</p>
+          <div class="button-stack">
+            <button id="restartButton" class="primary-button">Sprint Again</button>
+            <button id="gameOverHomeButton" class="ghost-button wide">Quit to Home</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="footer-bar">
+      <div class="pill">Named leaderboard</div>
+      <div class="pill">Evolving run phases</div>
+      <div class="pill">Power-up variety</div>
+      <div class="pill accent">Responsive arcade sprint</div>
+    </section>
+
+    <section class="mobile-dock" aria-label="Compact mobile run stats">
+      <div class="dock-chip">
+        <span class="label">Best</span>
+        <strong id="bestDockValue">0</strong>
+      </div>
+      <div class="dock-chip combo-card">
+        <span class="label">Rush</span>
+        <strong id="comboDockValue">x1</strong>
+      </div>
+      <div class="dock-chip phase-card">
+        <span class="label">Phase</span>
+        <strong id="phaseDockValue">Neon Warmup</strong>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
