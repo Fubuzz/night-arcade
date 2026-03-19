@@ -84,6 +84,11 @@
     #audioBadge {
       top: 10px;
       opacity: 1;
+      white-space: normal;
+      text-align: center;
+      line-height: 1.3;
+      min-width: 180px;
+      max-width: calc(100% - 84px);
     }
     #audioBadge.is-starting {
       background: rgba(99,216,255,0.14);
@@ -106,6 +111,34 @@
       transform: translateX(-50%) translateY(-6px);
     }
 
+    #unmuteBtn {
+      position: absolute;
+      top: 46px;
+      left: 50%;
+      transform: translateX(-50%);
+      min-width: 132px;
+      padding: 9px 16px;
+      border: 1px solid rgba(255,255,255,0.24);
+      border-radius: 999px;
+      background: rgba(255,215,90,0.18);
+      color: #fff7d6;
+      font: 700 12px/1 Arial, Helvetica, sans-serif;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+      z-index: 5;
+      transition: opacity 180ms ease, transform 180ms ease, background 180ms ease, border-color 180ms ease;
+    }
+    #unmuteBtn.is-hidden {
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(-50%) translateY(-6px);
+    }
+    #unmuteBtn.is-error {
+      background: rgba(255,102,127,0.22);
+      border-color: rgba(255,102,127,0.44);
+      color: #ffe8ed;
+    }
+
     @media (max-width: 680px), (pointer: coarse) {
       #hint { display: none; }
     }
@@ -114,7 +147,8 @@
 <body>
   <div id="shell" aria-label="Kung Fu Brawler game container">
     <canvas id="game" width="360" height="640" aria-label="Kung Fu Brawler"></canvas>
-    <div id="audioBadge">TAP TO START AUDIO</div>
+    <div id="audioBadge">AUDIO: LOCKED · TAP / CLICK / PRESS KEY</div>
+    <button id="unmuteBtn" type="button">UNMUTE</button>
     <div id="hint">Move: ← → / A D · Jump: ↑ / W / Space · Punch: J · Kick: K / X · Parry: P / Shift</div>
   </div>
 
@@ -124,6 +158,7 @@
 
       const canvas = document.getElementById('game');
       const badge = document.getElementById('audioBadge');
+      const unmuteBtn = document.getElementById('unmuteBtn');
       const ctx = canvas.getContext('2d');
       ctx.imageSmoothingEnabled = false;
 
@@ -642,6 +677,7 @@
         audioUnlocked: false,
         audioState: 'locked',
         audioBadgeTimer: 0,
+        audioError: '',
         timeScale: 1,
         timeScaleTimer: 0,
         freezeTimer: 0,
@@ -675,6 +711,22 @@
         game.timeScale = 1;
         game.timeScaleTimer = 0;
         game.freezeTimer = 0;
+        game.audioError = '';
+      }
+
+      function updateUnmuteButton() {
+        if (!unmuteBtn) return;
+        const show = !game.musicStarted || !game.audioUnlocked || !!game.audioError || game.muted;
+        unmuteBtn.classList.toggle('is-hidden', !show);
+        unmuteBtn.classList.toggle('is-error', !!game.audioError);
+        if (game.audioError) unmuteBtn.textContent = 'UNMUTE (RETRY)';
+        else if (game.muted) unmuteBtn.textContent = 'UNMUTE';
+        else if (!game.musicStarted || !game.audioUnlocked) unmuteBtn.textContent = 'START AUDIO';
+        else unmuteBtn.textContent = 'UNMUTE';
+      }
+
+      function audioBadgeText(label) {
+        return `AUDIO: ${label.toUpperCase()}`;
       }
 
       function setAudioBadge(text, state = 'locked', autoHideMs = 0) {
@@ -686,7 +738,8 @@
         if (state === 'starting') badge.classList.add('is-starting');
         else if (state === 'live') badge.classList.add('is-live');
         else if (state === 'error') badge.classList.add('is-error');
-        if (autoHideMs > 0) {
+        updateUnmuteButton();
+        if (autoHideMs > 0 && state === 'live' && game.audioUnlocked && !game.muted && !game.audioError) {
           window.clearTimeout(setAudioBadge.hideTimer);
           setAudioBadge.hideTimer = window.setTimeout(() => {
             badge.classList.add('is-hidden');
@@ -730,10 +783,15 @@
           const AC = window.AudioContext || window.webkitAudioContext;
           if (!AC) {
             game.musicReady = false;
+            game.audioError = 'AudioContext unsupported';
+            console.error('[KungFuBrawler audio] AudioContext unsupported');
+            setAudioBadge(`${audioBadgeText('error')} · unsupported`, 'error');
             return false;
           }
           try {
             this.ctx = new AC();
+            console.log('[KungFuBrawler audio] AudioContext created', this.ctx.state);
+            game.audioError = '';
             this.master = this.ctx.createGain();
             this.musicGain = this.ctx.createGain();
             this.sfxGain = this.ctx.createGain();
@@ -745,28 +803,34 @@
             this.master.connect(this.ctx.destination);
             this.ctx.addEventListener?.('statechange', () => {
               if (!this.ctx) return;
+              console.log('[KungFuBrawler audio] statechange ->', this.ctx.state);
+              game.audioState = this.ctx.state;
               if (this.ctx.state === 'running') {
                 game.audioUnlocked = true;
                 game.musicReady = true;
-                if (game.musicStarted) setAudioBadge(game.muted ? 'AUDIO MUTED' : 'AUDIO ON', 'live', CONFIG.audio.badgeLiveHideMs);
+                game.audioError = '';
+                setAudioBadge(`${audioBadgeText('running')} · music ${game.musicStarted ? 'on' : 'ready'}`, 'live', game.musicStarted && !game.muted ? CONFIG.audio.badgeLiveHideMs : 0);
               } else if (this.ctx.state === 'suspended') {
                 game.audioUnlocked = false;
-                setAudioBadge('TAP TO RESUME AUDIO', 'locked');
+                setAudioBadge(`${audioBadgeText('suspended')} · tap/click/key`, 'locked');
+              } else if (this.ctx.state === 'closed') {
+                game.audioUnlocked = false;
+                game.audioError = 'AudioContext closed';
+                setAudioBadge(`${audioBadgeText('closed')} · retry`, 'error');
               }
             });
-            window.addEventListener('pointerdown', this.resumeBound, { passive: true });
-            window.addEventListener('touchstart', this.resumeBound, { passive: true });
-            window.addEventListener('keydown', this.resumeBound, { passive: true });
-            window.addEventListener('visibilitychange', this.resumeBound, { passive: true });
             game.musicReady = true;
+            game.audioState = this.ctx.state;
             return true;
           } catch (err) {
-            console.error('Audio context init failed', err);
+            console.error('[KungFuBrawler audio] Audio context init failed', err);
             this.ctx = null;
             this.master = null;
             this.musicGain = null;
             this.sfxGain = null;
             game.musicReady = false;
+            game.audioError = err?.message || 'Audio init failed';
+            setAudioBadge(`${audioBadgeText('error')} · init failed`, 'error');
             return false;
           }
         }
@@ -775,24 +839,39 @@
           if (document.visibilityState === 'hidden') return false;
           if (this.ctx.state !== 'running') {
             try {
+              console.log('[KungFuBrawler audio] resuming AudioContext from', this.ctx.state);
               await this.ctx.resume();
             } catch (err) {
-              console.warn('Audio resume blocked', err);
+              console.error('[KungFuBrawler audio] Audio resume blocked', err);
+              game.audioError = err?.message || 'Audio resume blocked';
+              setAudioBadge(`${audioBadgeText(this.ctx.state || 'blocked')} · tap retry`, 'error');
               return false;
             }
           }
           game.audioUnlocked = this.ctx.state === 'running';
+          game.audioState = this.ctx.state;
+          if (!game.audioUnlocked) {
+            game.audioError = `Audio state: ${this.ctx.state}`;
+            setAudioBadge(`${audioBadgeText(this.ctx.state || 'locked')} · tap retry`, 'error');
+          } else {
+            game.audioError = '';
+          }
           return game.audioUnlocked;
         }
         async start() {
-          if (!this.ensure()) return false;
+          if (!this.ensure() || !this.ctx) return false;
           const resumed = await this.resumeIfNeeded();
           if (!resumed) return false;
-          if (this.started) return true;
+          if (this.started) {
+            console.log('[KungFuBrawler audio] audio already started', this.ctx.state);
+            return true;
+          }
           this.started = true;
           game.musicStarted = true;
           game.audioUnlocked = true;
+          game.audioError = '';
           this.nextTime = this.ctx.currentTime + 0.05;
+          console.log('[KungFuBrawler audio] background music starting at', this.nextTime.toFixed(3));
           this.scheduleLoop();
           return true;
         }
@@ -969,6 +1048,7 @@
       }
 
       const audio = new TinyMusic();
+      audio.ensure();
 
       function pressLeft() { return !!(keys.ArrowLeft || keys.KeyA || touchState.left); }
       function pressRight() { return !!(keys.ArrowRight || keys.KeyD || touchState.right); }
@@ -2065,34 +2145,46 @@
         pointers.delete(id);
       }
 
-      async function primeAudio() {
-        if (!game.musicStarted) setAudioBadge('STARTING AUDIO…', 'starting');
-        else if (!game.audioUnlocked) setAudioBadge('RESUMING AUDIO…', 'starting');
+      async function primeAudio(source = 'interaction') {
+        console.log(`[KungFuBrawler audio] primeAudio from ${source}`);
+        if (!game.musicStarted) setAudioBadge(`${audioBadgeText('starting')} · ${source}`, 'starting');
+        else if (!game.audioUnlocked) setAudioBadge(`${audioBadgeText('resuming')} · ${source}`, 'starting');
         try {
           const started = await audio.start();
           if (!started) {
-            setAudioBadge('TAP TO ENABLE AUDIO', 'locked');
+            if (!game.audioError) game.audioError = 'Audio not running';
+            setAudioBadge(`${audioBadgeText(audio.ctx?.state || 'locked')} · tap/click/key`, game.audioError ? 'error' : 'locked');
             return false;
           }
-          setAudioBadge(game.muted ? 'AUDIO MUTED' : 'AUDIO ON', 'live', CONFIG.audio.badgeLiveHideMs);
+          if (game.muted) {
+            game.muted = false;
+            audio.setMuted(false);
+          }
+          game.audioError = '';
+          const stateLabel = audio.ctx?.state || 'running';
+          setAudioBadge(`${audioBadgeText(stateLabel)} · music on`, 'live', CONFIG.audio.badgeLiveHideMs);
+          console.log('[KungFuBrawler audio] audio started successfully', { source, state: stateLabel });
           return true;
         } catch (err) {
-          setAudioBadge('AUDIO BLOCKED', 'error');
-          console.warn('Audio start failed', err);
+          game.audioError = err?.message || 'Audio start failed';
+          setAudioBadge(`${audioBadgeText('error')} · ${game.audioError}`, 'error');
+          console.error('[KungFuBrawler audio] Audio start failed', err);
           return false;
         }
       }
 
-      function toggleMute() {
-        game.muted = !game.muted;
+      function toggleMute(forceMuted = null) {
+        game.muted = typeof forceMuted === 'boolean' ? forceMuted : !game.muted;
         audio.setMuted(game.muted);
-        setAudioBadge(game.muted ? 'AUDIO MUTED' : (game.musicStarted ? 'AUDIO ON' : 'TAP TO START AUDIO'), game.muted ? 'live' : (game.musicStarted ? 'live' : 'locked'), game.musicStarted && !game.muted ? 1200 : 0);
+        game.audioError = '';
+        const stateLabel = audio.ctx?.state || (game.musicStarted ? 'running' : 'locked');
+        setAudioBadge(game.muted ? `${audioBadgeText(stateLabel)} · muted` : `${audioBadgeText(stateLabel)} · music on`, game.muted ? 'locked' : 'live', game.musicStarted && !game.muted ? 1200 : 0);
       }
 
       function onPointerDown(e) {
         e.preventDefault();
         canvas.setPointerCapture?.(e.pointerId);
-        primeAudio();
+        primeAudio('pointer');
         const key = controlAt(e.clientX, e.clientY);
         if (key === 'restart') {
           resetGame();
@@ -2130,13 +2222,13 @@
       window.addEventListener('keydown', async (e) => {
         if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code) || e.key === ' ') e.preventDefault();
         keys[e.code] = true;
-        await primeAudio();
+        await primeAudio('keyboard');
         if (e.code === 'KeyM') toggleMute();
         if (e.code === 'Enter' && game.gameOver && game.restartTimer <= 0) resetGame();
       }, { passive: false });
 
       document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && game.musicStarted) primeAudio();
+        if (document.visibilityState === 'visible' && game.musicStarted) primeAudio('visibility');
       });
 
       window.addEventListener('keyup', (e) => {
@@ -2157,6 +2249,12 @@
       canvas.addEventListener('pointerup', onPointerUp, { passive: false });
       canvas.addEventListener('pointercancel', onPointerUp, { passive: false });
       canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+      unmuteBtn?.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (game.muted) toggleMute(false);
+        await primeAudio('unmute button');
+      }, { passive: false });
 
       window.addEventListener('blur', () => {
         for (const key in keys) keys[key] = false;
