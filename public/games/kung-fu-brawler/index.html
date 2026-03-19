@@ -77,10 +77,34 @@
       padding: 6px 10px;
       pointer-events: none;
       white-space: nowrap;
+      transition: opacity 180ms ease, transform 180ms ease, background 180ms ease, border-color 180ms ease;
     }
 
     #hint { bottom: 10px; }
-    #audioBadge { top: 10px; }
+    #audioBadge {
+      top: 10px;
+      opacity: 1;
+    }
+    #audioBadge.is-starting {
+      background: rgba(99,216,255,0.14);
+      border-color: rgba(99,216,255,0.35);
+      color: #dff7ff;
+      transform: translateX(-50%) scale(1.02);
+    }
+    #audioBadge.is-live {
+      background: rgba(93,255,178,0.14);
+      border-color: rgba(93,255,178,0.35);
+      color: #eafff4;
+    }
+    #audioBadge.is-error {
+      background: rgba(255,102,127,0.16);
+      border-color: rgba(255,102,127,0.38);
+      color: #ffe8ed;
+    }
+    #audioBadge.is-hidden {
+      opacity: 0;
+      transform: translateX(-50%) translateY(-6px);
+    }
 
     @media (max-width: 680px), (pointer: coarse) {
       #hint { display: none; }
@@ -137,11 +161,16 @@
           moveStateThreshold: 22,
           attackMoveFactor: { punch: 0.42, kick: 0.32 },
           parryMoveFactor: 0.48,
-          parryWindow: 0.26,
-          parryCooldown: 0.36,
-          parrySuccessTime: 0.2,
-          counterWindow: 0.9,
-          parryInvuln: 0.1,
+          parryWindow: 0.34,
+          parryCooldown: 0.42,
+          parrySuccessTime: 0.32,
+          counterWindow: 1.05,
+          parryInvuln: 0.16,
+          parrySlowMoTime: 0.11,
+          parrySlowMoScale: 0.28,
+          parryFreezeTime: 0.028,
+          parryPulseRate: 22,
+          parryCooldownBlinkRate: 10,
           hurtTimer: 0.24,
           hurtFlash: 0.18,
           projectileInvuln: 0.38,
@@ -200,8 +229,9 @@
           hurtFriction: 0.93,
           stunRecoverAccel: 900,
           defaultAttackResetCooldown: 0.95,
-          heavyParryStun: 0.62,
-          defaultParryStun: 0.92,
+          heavyParryStun: 0.92,
+          defaultParryStun: 1.18,
+          projectileParryStun: 1.02,
           agileParryCooldown: 0.7,
           defaultParryCooldown: 0.95,
           projectileSpeed: 182,
@@ -244,13 +274,14 @@
           cameraShakeDecay: 18,
           hitShake: 3.5,
           heavyHitShake: 5.5,
-          parryShake: 4.5,
+          parryShake: 7,
           playerHitShake: 5.5,
           particleFriction: 0.986,
-          maxParticles: 320,
-          flashParry: { alpha: 0.25, life: 0.08 },
+          maxParticles: 420,
+          flashParry: { alpha: 0.45, life: 0.12 },
           flashCounter: { alpha: 0.12, life: 0.06 },
-          flashProjectileParry: { alpha: 0.2, life: 0.07 },
+          flashProjectileParry: { alpha: 0.34, life: 0.1 },
+          flashParryFail: { alpha: 0.18, life: 0.07 },
           flashHitboxKick: 'rgba(255,102,127,0.14)',
           flashHitboxPunch: 'rgba(255,225,120,0.13)'
         },
@@ -281,14 +312,15 @@
           deathMs: 36
         },
         audio: {
-          masterGain: 0.35,
-          musicGain: 0.42,
-          sfxGain: 0.9,
-          lookahead: 0.18,
-          schedulerMs: 70,
+          masterGain: 0.42,
+          musicGain: 0.44,
+          sfxGain: 1,
+          lookahead: 0.2,
+          schedulerMs: 60,
           tempo: 132,
           stopTail: 0.02,
-          kickTail: 0.1
+          kickTail: 0.1,
+          badgeLiveHideMs: 1600
         },
         seeds: {
           default: 0xC0FFEE12
@@ -472,6 +504,8 @@
           parryTimer: 0,
           parryCooldown: 0,
           parrySuccess: 0,
+          parryGlow: 0,
+          parryFailTimer: 0,
           counterWindow: 0,
           invuln: 0,
           hurtTimer: 0,
@@ -605,6 +639,12 @@
         muted: false,
         musicReady: false,
         musicStarted: false,
+        audioUnlocked: false,
+        audioState: 'locked',
+        audioBadgeTimer: 0,
+        timeScale: 1,
+        timeScaleTimer: 0,
+        freezeTimer: 0,
         runtimeError: ''
       };
 
@@ -632,7 +672,30 @@
         game.lastTs = 0;
         game.accumulatorMs = 0;
         game.runtimeError = '';
+        game.timeScale = 1;
+        game.timeScaleTimer = 0;
+        game.freezeTimer = 0;
       }
+
+      function setAudioBadge(text, state = 'locked', autoHideMs = 0) {
+        if (!badge) return;
+        badge.textContent = text;
+        badge.style.display = 'block';
+        badge.classList.remove('is-starting', 'is-live', 'is-error', 'is-hidden');
+        game.audioState = state;
+        if (state === 'starting') badge.classList.add('is-starting');
+        else if (state === 'live') badge.classList.add('is-live');
+        else if (state === 'error') badge.classList.add('is-error');
+        if (autoHideMs > 0) {
+          window.clearTimeout(setAudioBadge.hideTimer);
+          setAudioBadge.hideTimer = window.setTimeout(() => {
+            badge.classList.add('is-hidden');
+          }, autoHideMs);
+        } else {
+          window.clearTimeout(setAudioBadge.hideTimer);
+        }
+      }
+      setAudioBadge.hideTimer = 0;
 
       class TinyMusic {
         constructor() {
@@ -646,6 +709,7 @@
           this.step = 0;
           this.timer = null;
           this.tempo = CONFIG.audio.tempo;
+          this.resumeBound = () => this.resumeIfNeeded().catch((err) => reportRuntimeError('Audio resume failed', err));
           this.scale = {
             C4: 261.63, D4: 293.66, E4: 329.63, G4: 392.0, A4: 440.0,
             C5: 523.25, D5: 587.33, E5: 659.25, G5: 783.99, A5: 880.0
@@ -664,7 +728,10 @@
         ensure() {
           if (this.ctx) return true;
           const AC = window.AudioContext || window.webkitAudioContext;
-          if (!AC) return false;
+          if (!AC) {
+            game.musicReady = false;
+            return false;
+          }
           try {
             this.ctx = new AC();
             this.master = this.ctx.createGain();
@@ -676,6 +743,21 @@
             this.musicGain.connect(this.master);
             this.sfxGain.connect(this.master);
             this.master.connect(this.ctx.destination);
+            this.ctx.addEventListener?.('statechange', () => {
+              if (!this.ctx) return;
+              if (this.ctx.state === 'running') {
+                game.audioUnlocked = true;
+                game.musicReady = true;
+                if (game.musicStarted) setAudioBadge(game.muted ? 'AUDIO MUTED' : 'AUDIO ON', 'live', CONFIG.audio.badgeLiveHideMs);
+              } else if (this.ctx.state === 'suspended') {
+                game.audioUnlocked = false;
+                setAudioBadge('TAP TO RESUME AUDIO', 'locked');
+              }
+            });
+            window.addEventListener('pointerdown', this.resumeBound, { passive: true });
+            window.addEventListener('touchstart', this.resumeBound, { passive: true });
+            window.addEventListener('keydown', this.resumeBound, { passive: true });
+            window.addEventListener('visibilitychange', this.resumeBound, { passive: true });
             game.musicReady = true;
             return true;
           } catch (err) {
@@ -688,21 +770,41 @@
             return false;
           }
         }
+        async resumeIfNeeded() {
+          if (!this.ensure() || !this.ctx) return false;
+          if (document.visibilityState === 'hidden') return false;
+          if (this.ctx.state !== 'running') {
+            try {
+              await this.ctx.resume();
+            } catch (err) {
+              console.warn('Audio resume blocked', err);
+              return false;
+            }
+          }
+          game.audioUnlocked = this.ctx.state === 'running';
+          return game.audioUnlocked;
+        }
         async start() {
-          if (!this.ensure()) return;
-          if (this.ctx.state === 'suspended') await this.ctx.resume();
-          if (this.started) return;
+          if (!this.ensure()) return false;
+          const resumed = await this.resumeIfNeeded();
+          if (!resumed) return false;
+          if (this.started) return true;
           this.started = true;
           game.musicStarted = true;
+          game.audioUnlocked = true;
           this.nextTime = this.ctx.currentTime + 0.05;
           this.scheduleLoop();
+          return true;
         }
         setMuted(muted) {
           game.muted = muted;
           if (this.master) this.master.gain.value = muted ? 0 : CONFIG.audio.masterGain;
         }
         scheduleLoop() {
-          if (!this.ctx) return;
+          if (!this.ctx || this.ctx.state !== 'running') {
+            this.timer = setTimeout(() => this.scheduleLoop(), CONFIG.audio.schedulerMs);
+            return;
+          }
           const beat = 60 / this.tempo / 2;
           while (this.nextTime < this.ctx.currentTime + this.lookahead) {
             const i = this.step % this.melody.length;
@@ -810,19 +912,29 @@
           osc.start(time);
         }
         sfx(type) {
-          if (!this.ensure() || game.muted) return;
+          if (!this.ensure() || game.muted || !this.ctx || this.ctx.state !== 'running') return;
           const now = this.ctx.currentTime;
           if (type === 'punch') {
-            this.tone(now, 180, 110, 0.06, 'square', 0.06);
-            this.noise(now, 0.05, 0.028, 1100, 0.04);
+            this.tone(now, 180, 110, 0.06, 'square', 0.07);
+            this.noise(now, 0.05, 0.03, 1100, 0.04);
           } else if (type === 'kick') {
-            this.tone(now, 150, 72, 0.1, 'triangle', 0.08);
-            this.noise(now, 0.06, 0.03, 900, 0.05);
+            this.tone(now, 150, 72, 0.1, 'triangle', 0.09);
+            this.noise(now, 0.06, 0.034, 900, 0.05);
           } else if (type === 'hurt') {
-            this.tone(now, 200, 90, 0.12, 'sawtooth', 0.05);
-          } else if (type === 'parry') {
-            this.tone(now, 520, 880, 0.12, 'square', 0.08);
-            this.tone(now + 0.015, 660, 1180, 0.14, 'triangle', 0.05);
+            this.tone(now, 200, 90, 0.12, 'sawtooth', 0.055);
+          } else if (type === 'parryReady') {
+            this.tone(now, 360, 460, 0.06, 'triangle', 0.04);
+            this.tone(now + 0.025, 460, 560, 0.05, 'square', 0.03);
+          } else if (type === 'parrySuccess') {
+            this.tone(now, 520, 980, 0.14, 'square', 0.09);
+            this.tone(now + 0.018, 660, 1320, 0.16, 'triangle', 0.06);
+            this.noise(now, 0.045, 0.018, 2400, 0.8);
+          } else if (type === 'parryProjectile') {
+            this.tone(now, 460, 1080, 0.16, 'square', 0.09);
+            this.tone(now + 0.02, 620, 1440, 0.18, 'triangle', 0.06);
+            this.noise(now, 0.06, 0.022, 2600, 1.2);
+          } else if (type === 'parryFail') {
+            this.tone(now, 220, 150, 0.08, 'sawtooth', 0.045);
           } else if (type === 'death') {
             this.tone(now, 220, 70, 0.22, 'square', 0.06);
           } else if (type === 'throw') {
@@ -958,12 +1070,54 @@
         return enemy.attackPhase === 'windup' && enemy.attackTimer >= enemy.attackWindup - 0.26 && enemy.attackTimer <= enemy.attackWindup + 0.06;
       }
 
+      function triggerParryCinematic(power = 1) {
+        game.freezeTimer = Math.max(game.freezeTimer, CONFIG.player.parryFreezeTime * power);
+        game.timeScale = Math.min(game.timeScale, CONFIG.player.parrySlowMoScale);
+        game.timeScaleTimer = Math.max(game.timeScaleTimer, CONFIG.player.parrySlowMoTime * power);
+      }
+
+      function triggerParrySuccess(sourceX, options = {}) {
+        const p = game.player;
+        p.parrySuccess = Math.max(p.parrySuccess, CONFIG.player.parrySuccessTime * (options.projectile ? 1.08 : 1));
+        p.parryGlow = Math.max(p.parryGlow, 0.38);
+        p.parryFailTimer = 0;
+        p.counterWindow = Math.max(p.counterWindow, options.counterWindow || CONFIG.player.counterWindow);
+        p.invuln = Math.max(p.invuln, CONFIG.player.parryInvuln);
+        flash(palette.white, CONFIG.fx.flashParry.alpha, CONFIG.fx.flashParry.life);
+        burst(p.x + p.w * 0.5, p.y + 26, palette.green, options.projectile ? 24 : 20, 70, 210, 2, 5);
+        burst(p.x + p.w * 0.5, p.y + 26, palette.gold, options.projectile ? 12 : 10, 40, 150, 2, 4);
+        audio.sfx(options.projectile ? 'parryProjectile' : 'parrySuccess');
+        haptic(CONFIG.haptics.parryMs);
+        game.cameraShake = Math.max(game.cameraShake, CONFIG.fx.parryShake + (options.projectile ? 1 : 0));
+        game.comboText = options.projectile ? 'PROJECTILE PARRY!' : 'PARRY!';
+        game.comboTimer = CONFIG.player.comboTimer + 0.18;
+        triggerParryCinematic(options.projectile ? 1.15 : 1);
+        if (typeof sourceX === 'number') {
+          burst(sourceX, p.y + 28, palette.white, options.projectile ? 12 : 8, 20, 120, 1, 3);
+        }
+      }
+
+      function failParryFeedback() {
+        const p = game.player;
+        p.parryFailTimer = 0.18;
+        flash(palette.red, CONFIG.fx.flashParryFail.alpha, CONFIG.fx.flashParryFail.life);
+        burst(p.x + p.w * 0.5, p.y + 28, palette.red, 8, 30, 100, 1, 3);
+        audio.sfx('parryFail');
+      }
+
       function tryParry() {
         const p = game.player;
-        if (!p.alive || p.parryCooldown > 0) return false;
+        if (!p.alive) return false;
+        if (p.parryCooldown > 0) {
+          failParryFeedback();
+          return false;
+        }
         p.parryTimer = CONFIG.player.parryWindow;
         p.parryCooldown = CONFIG.player.parryCooldown;
+        p.parryGlow = Math.max(p.parryGlow, CONFIG.player.parryWindow + 0.08);
+        p.parryFailTimer = 0;
         setPlayerState('parry');
+        audio.sfx('parryReady');
         haptic(CONFIG.haptics.parryMs);
         return true;
       }
@@ -1002,17 +1156,10 @@
         const p = game.player;
         if (!p.alive || p.invuln > 0) return;
         if (p.parryTimer > 0) {
-          p.parrySuccess = CONFIG.player.parrySuccessTime;
-          p.counterWindow = CONFIG.player.counterWindow;
-          p.invuln = CONFIG.player.parryInvuln;
-          flash(palette.white, CONFIG.fx.flashParry.alpha, CONFIG.fx.flashParry.life);
-          burst(p.x + p.w * 0.5, p.y + 26, palette.green, 16, 60, 180);
-          audio.sfx('parry');
-          haptic(CONFIG.haptics.parryMs);
-          game.cameraShake = Math.max(game.cameraShake, CONFIG.fx.parryShake);
+          triggerParrySuccess(sourceX);
           for (const enemy of game.enemies) {
             if (enemy.dead) continue;
-            const close = Math.abs((enemy.x + enemy.w * 0.5) - (p.x + p.w * 0.5)) < 58;
+            const close = Math.abs((enemy.x + enemy.w * 0.5) - (p.x + p.w * 0.5)) < 72;
             if (close && canParryAttack(enemy)) {
               enemy.stunTimer = enemy.type === 'heavy' ? CONFIG.enemyBalance.heavyParryStun : CONFIG.enemyBalance.defaultParryStun;
               enemy.attackTimer = 0;
@@ -1020,13 +1167,15 @@
               enemy.attackCooldown = enemy.type === 'agile' ? CONFIG.enemyBalance.agileParryCooldown : CONFIG.enemyBalance.defaultParryCooldown;
               enemy.state = 'hurt';
               enemy.stateTime = 0;
-              enemy.vx = sign((enemy.x + enemy.w * 0.5) - (p.x + p.w * 0.5)) * 90;
+              enemy.vx = sign((enemy.x + enemy.w * 0.5) - (p.x + p.w * 0.5)) * 140;
+              burst(enemy.x + enemy.w * 0.5, enemy.y + enemy.h * 0.42, palette.white, 10, 30, 130, 1, 3);
             }
           }
           return;
         }
 
         p.health = Math.max(0, p.health - damage);
+        p.parryFailTimer = 0;
         p.hurtTimer = CONFIG.player.hurtTimer;
         p.hitFlash = CONFIG.player.hurtFlash;
         p.invuln = sourceType === 'projectile' ? CONFIG.player.projectileInvuln : CONFIG.player.meleeInvuln;
@@ -1063,6 +1212,8 @@
         p.parryTimer = Math.max(0, p.parryTimer - dt);
         p.parryCooldown = Math.max(0, p.parryCooldown - dt);
         p.parrySuccess = Math.max(0, p.parrySuccess - dt);
+        p.parryGlow = Math.max(0, p.parryGlow - dt);
+        p.parryFailTimer = Math.max(0, p.parryFailTimer - dt);
         p.counterWindow = Math.max(0, p.counterWindow - dt);
         p.scorePulse = Math.max(0, p.scorePulse - dt);
         p.attackCooldowns.punch = Math.max(0, p.attackCooldowns.punch - dt);
@@ -1312,19 +1463,21 @@
           pr.rot += pr.spin * dt;
           pr.vy += CONFIG.enemyBalance.projectileGravity * dt;
 
-          if (p.parryTimer > 0) {
-            const parryBox = { x: p.x - 6, y: p.y + 12, w: p.w + 12, h: p.h - 18 };
+          if (p.parryTimer > 0 && pr.color !== palette.gold) {
+            const parryBox = { x: p.x - 10, y: p.y + 8, w: p.w + 20, h: p.h - 10 };
             if (rectsOverlap(pr, parryBox)) {
-              pr.vx *= CONFIG.enemyBalance.projectileParrySpeedScale;
-              pr.vy = CONFIG.enemyBalance.projectileParryLift;
+              pr.vx *= CONFIG.enemyBalance.projectileParrySpeedScale * 1.15;
+              pr.vy = CONFIG.enemyBalance.projectileParryLift - 10;
+              pr.spin *= -1.8;
               pr.color = palette.gold;
-              p.parrySuccess = CONFIG.player.parrySuccessTime;
-              p.counterWindow = CONFIG.enemyBalance.projectileParryCounterWindow;
-              p.invuln = CONFIG.player.parryInvuln;
+              triggerParrySuccess(pr.x + 4, { projectile: true, counterWindow: CONFIG.enemyBalance.projectileParryCounterWindow });
               flash(palette.white, CONFIG.fx.flashProjectileParry.alpha, CONFIG.fx.flashProjectileParry.life);
-              burst(pr.x + 4, pr.y + 4, palette.green, 14, 50, 170);
-              audio.sfx('parry');
-              haptic(CONFIG.haptics.parryMs);
+              burst(pr.x + 4, pr.y + 4, palette.green, 18, 60, 200);
+              for (const enemy of game.enemies) {
+                if (enemy.dead) continue;
+                const close = Math.abs((enemy.x + enemy.w * 0.5) - (p.x + p.w * 0.5)) < 84;
+                if (close) enemy.stunTimer = Math.max(enemy.stunTimer, CONFIG.enemyBalance.projectileParryStun);
+              }
             }
           }
 
@@ -1393,20 +1546,33 @@
       }
 
       function update(dt) {
-        game.time += dt;
-        game.cameraShake = Math.max(0, game.cameraShake - dt * CONFIG.fx.cameraShakeDecay);
-        game.comboTimer = Math.max(0, game.comboTimer - dt);
+        const scaledDt = dt * game.timeScale;
+        game.time += scaledDt;
+        game.cameraShake = Math.max(0, game.cameraShake - scaledDt * CONFIG.fx.cameraShakeDecay);
+        game.comboTimer = Math.max(0, game.comboTimer - scaledDt);
         if (game.comboDecay > 0) {
-          game.comboDecay -= dt;
+          game.comboDecay -= scaledDt;
           if (game.comboDecay <= 0) game.comboCount = 0;
         }
-        if (game.gameOver) game.restartTimer = Math.max(0, game.restartTimer - dt);
+        if (game.gameOver) game.restartTimer = Math.max(0, game.restartTimer - scaledDt);
 
-        updatePlayer(dt);
-        updateSpawner(dt);
-        updateEnemies(dt);
-        updateProjectiles(dt);
-        updateParticles(dt);
+        if (game.freezeTimer > 0) {
+          game.freezeTimer = Math.max(0, game.freezeTimer - dt);
+          updateParticles(dt * 0.35);
+          return;
+        }
+        if (game.timeScaleTimer > 0) {
+          game.timeScaleTimer = Math.max(0, game.timeScaleTimer - dt);
+          if (game.timeScaleTimer <= 0) game.timeScale = 1;
+        } else if (game.timeScale < 1) {
+          game.timeScale = approach(game.timeScale, 1, dt * 5.5);
+        }
+
+        updatePlayer(scaledDt);
+        updateSpawner(scaledDt);
+        updateEnemies(scaledDt);
+        updateProjectiles(scaledDt);
+        updateParticles(scaledDt);
       }
 
       function drawBackground(t) {
@@ -1599,12 +1765,13 @@
       }
 
       function drawUI() {
+        const p = game.player;
         ctx.fillStyle = 'rgba(6,8,14,0.65)';
         ctx.fillRect(12, 12, 206, 38);
         ctx.strokeStyle = 'rgba(255,255,255,0.12)';
         ctx.strokeRect(12.5, 12.5, 205, 37);
 
-        const hp = game.player.health / game.player.maxHealth;
+        const hp = p.health / p.maxHealth;
         ctx.fillStyle = 'rgba(255,255,255,0.14)';
         ctx.fillRect(20, 21, 132, 18);
         const hpGrad = ctx.createLinearGradient(20, 0, 152, 0);
@@ -1617,10 +1784,10 @@
 
         ctx.fillStyle = palette.white;
         ctx.font = 'bold 11px Arial';
-        ctx.fillText(`HP ${game.player.health}/${game.player.maxHealth}`, 160, 34);
+        ctx.fillText(`HP ${p.health}/${p.maxHealth}`, 160, 34);
 
         ctx.textAlign = 'right';
-        ctx.fillStyle = game.player.scorePulse > 0 ? palette.gold : palette.white;
+        ctx.fillStyle = p.scorePulse > 0 ? palette.gold : palette.white;
         ctx.font = 'bold 18px Arial';
         ctx.fillText(String(game.score).padStart(4, '0'), W - 16, 28);
         ctx.font = 'bold 11px Arial';
@@ -1628,7 +1795,7 @@
         ctx.fillText('街头积分', W - 16, 42);
         ctx.textAlign = 'left';
 
-        if (game.player.counterWindow > 0) {
+        if (p.counterWindow > 0) {
           ctx.fillStyle = 'rgba(125,255,176,0.16)';
           ctx.fillRect(12, 56, CONFIG.ui.counterMeterW, 18);
           ctx.strokeStyle = 'rgba(125,255,176,0.32)';
@@ -1636,11 +1803,42 @@
           ctx.fillStyle = palette.green;
           ctx.font = 'bold 11px Arial';
           ctx.fillText('COUNTER OPEN', 20, 69);
-        } else if (game.player.parryCooldown > 0) {
+        } else {
+          const ready = p.parryCooldown <= 0;
+          const ratio = ready ? 1 : (1 - p.parryCooldown / CONFIG.player.parryCooldown);
+          const pulse = ready ? 0.7 + 0.3 * Math.sin(game.time * CONFIG.player.parryPulseRate) : 0.4 + 0.25 * Math.sin(game.time * CONFIG.player.parryCooldownBlinkRate);
           ctx.fillStyle = 'rgba(255,255,255,0.08)';
           ctx.fillRect(12, 56, CONFIG.ui.parryMeterW, 16);
-          ctx.fillStyle = 'rgba(125,255,176,0.8)';
-          ctx.fillRect(12, 56, CONFIG.ui.parryMeterW * (1 - game.player.parryCooldown / CONFIG.player.parryCooldown), 16);
+          ctx.fillStyle = ready ? `rgba(125,255,176,${0.45 + pulse * 0.35})` : 'rgba(125,255,176,0.8)';
+          ctx.fillRect(12, 56, CONFIG.ui.parryMeterW * clamp(ratio, 0, 1), 16);
+          ctx.strokeStyle = ready ? 'rgba(125,255,176,0.65)' : 'rgba(255,255,255,0.14)';
+          ctx.strokeRect(12.5, 56.5, CONFIG.ui.parryMeterW - 1, 15);
+          ctx.fillStyle = ready ? palette.green : 'rgba(255,255,255,0.75)';
+          ctx.font = 'bold 11px Arial';
+          ctx.fillText(ready ? 'PARRY READY' : 'PARRY RECHARGE', 20, 69);
+        }
+
+        if (p.parrySuccess > 0) {
+          ctx.save();
+          ctx.globalAlpha = clamp(p.parrySuccess / CONFIG.player.parrySuccessTime, 0, 1);
+          ctx.fillStyle = palette.white;
+          ctx.font = 'bold 28px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText('PARRY!', W / 2, 190);
+          ctx.fillStyle = palette.green;
+          ctx.font = 'bold 14px Arial';
+          ctx.fillText('PERFECT TIMING', W / 2, 212);
+          ctx.restore();
+          ctx.textAlign = 'left';
+        } else if (p.parryFailTimer > 0) {
+          ctx.save();
+          ctx.globalAlpha = clamp(p.parryFailTimer / 0.18, 0, 1);
+          ctx.fillStyle = '#ff9aa9';
+          ctx.font = 'bold 18px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText('TOO EARLY', W / 2, 192);
+          ctx.restore();
+          ctx.textAlign = 'left';
         }
 
         if (game.comboTimer > 0 && game.comboText) {
@@ -1659,6 +1857,7 @@
       }
 
       function drawControls() {
+        const p = game.player;
         for (const control of controlList) {
           const active = touchState[control.key] ||
             (control.key === 'left' && pressLeft()) ||
@@ -1669,20 +1868,48 @@
             (control.key === 'parry' && pressParry()) ||
             (control.key === 'mute' && !game.muted && game.musicStarted);
 
+          let fill = active ? 'rgba(255,255,255,0.22)' : control.color;
+          let stroke = active ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.18)';
+          let scale = 1;
+          if (control.key === 'parry') {
+            if (p.parryTimer > 0) {
+              fill = `rgba(125,255,176,${0.38 + 0.3 * Math.sin(game.time * CONFIG.player.parryPulseRate)})`;
+              stroke = 'rgba(255,255,255,0.96)';
+              scale = 1.14;
+            } else if (p.parryCooldown <= 0) {
+              fill = `rgba(125,255,176,${0.2 + 0.14 * (0.5 + 0.5 * Math.sin(game.time * 6))})`;
+              stroke = 'rgba(125,255,176,0.72)';
+              scale = 1.05;
+            } else {
+              fill = 'rgba(80,110,92,0.16)';
+              stroke = 'rgba(255,255,255,0.12)';
+            }
+          }
           ctx.globalAlpha = control.key === 'mute' ? 0.95 : 0.9;
-          ctx.fillStyle = active ? 'rgba(255,255,255,0.22)' : control.color;
+          ctx.fillStyle = fill;
+          ctx.save();
+          ctx.translate(control.x, control.y);
+          ctx.scale(scale, scale);
           ctx.beginPath();
-          ctx.arc(control.x, control.y, control.r, 0, Math.PI * 2);
+          ctx.arc(0, 0, control.r, 0, Math.PI * 2);
           ctx.fill();
-          ctx.strokeStyle = active ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.18)';
+          ctx.strokeStyle = stroke;
           ctx.lineWidth = control.key === 'kick' ? 2.4 : 2;
           ctx.stroke();
+          if (control.key === 'parry' && p.parryTimer > 0) {
+            ctx.strokeStyle = 'rgba(255,255,255,0.38)';
+            ctx.lineWidth = 1.3;
+            ctx.beginPath();
+            ctx.arc(0, 0, control.r + 6 + Math.sin(game.time * 18) * 2, 0, Math.PI * 2);
+            ctx.stroke();
+          }
           ctx.fillStyle = control.key === 'kick' ? palette.red : control.key === 'parry' ? palette.green : control.key === 'jump' ? palette.cyan : palette.white;
           if (control.key === 'mute' && game.muted) ctx.fillStyle = 'rgba(255,255,255,0.46)';
           ctx.font = control.key === 'mute' ? 'bold 14px Arial' : 'bold 15px Arial';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillText(control.key === 'mute' && game.muted ? '×' : control.label, control.x, control.y + 1);
+          ctx.fillText(control.key === 'mute' && game.muted ? '×' : control.label, 0, 1);
+          ctx.restore();
         }
         ctx.globalAlpha = 1;
         ctx.textAlign = 'left';
@@ -1773,10 +2000,17 @@
             ctx.fillRect(hb.x, hb.y, hb.w, hb.h);
           }
 
-          if (game.player.parryTimer > 0) {
-            ctx.strokeStyle = 'rgba(125,255,176,0.85)';
-            ctx.lineWidth = 2;
+          if (game.player.parryTimer > 0 || game.player.parryGlow > 0) {
+            const glowAlpha = game.player.parryTimer > 0
+              ? 0.7 + 0.3 * Math.sin(game.time * CONFIG.player.parryPulseRate)
+              : 0.22 + clamp(game.player.parryGlow / 0.38, 0, 1) * 0.38;
+            ctx.save();
+            ctx.strokeStyle = `rgba(125,255,176,${glowAlpha})`;
+            ctx.lineWidth = game.player.parryTimer > 0 ? 2.4 : 1.6;
             ctx.strokeRect(game.player.x - 4, game.player.y + 10, game.player.w + 8, game.player.h - 16);
+            ctx.strokeStyle = `rgba(255,255,255,${glowAlpha * 0.6})`;
+            ctx.strokeRect(game.player.x - 9, game.player.y + 5, game.player.w + 18, game.player.h - 6);
+            ctx.restore();
           }
 
           drawProjectiles();
@@ -1832,17 +2066,27 @@
       }
 
       async function primeAudio() {
-        badge.style.display = 'none';
+        if (!game.musicStarted) setAudioBadge('STARTING AUDIO…', 'starting');
+        else if (!game.audioUnlocked) setAudioBadge('RESUMING AUDIO…', 'starting');
         try {
-          await audio.start();
+          const started = await audio.start();
+          if (!started) {
+            setAudioBadge('TAP TO ENABLE AUDIO', 'locked');
+            return false;
+          }
+          setAudioBadge(game.muted ? 'AUDIO MUTED' : 'AUDIO ON', 'live', CONFIG.audio.badgeLiveHideMs);
+          return true;
         } catch (err) {
-          reportRuntimeError('Audio start failed', err);
+          setAudioBadge('AUDIO BLOCKED', 'error');
+          console.warn('Audio start failed', err);
+          return false;
         }
       }
 
       function toggleMute() {
         game.muted = !game.muted;
         audio.setMuted(game.muted);
+        setAudioBadge(game.muted ? 'AUDIO MUTED' : (game.musicStarted ? 'AUDIO ON' : 'TAP TO START AUDIO'), game.muted ? 'live' : (game.musicStarted ? 'live' : 'locked'), game.musicStarted && !game.muted ? 1200 : 0);
       }
 
       function onPointerDown(e) {
@@ -1861,7 +2105,7 @@
         if (!key) return;
         pointers.set(e.pointerId, key);
         touchState[key] = true;
-        if (key === 'punch' || key === 'kick' || key === 'parry') haptic(key === 'kick' ? CONFIG.haptics.kickMs : CONFIG.haptics.attackMs);
+        if (key === 'punch' || key === 'kick' || key === 'parry') haptic(key === 'kick' ? CONFIG.haptics.kickMs : key === 'parry' ? CONFIG.haptics.parryMs : CONFIG.haptics.attackMs);
       }
 
       function onPointerMove(e) {
@@ -1890,6 +2134,10 @@
         if (e.code === 'KeyM') toggleMute();
         if (e.code === 'Enter' && game.gameOver && game.restartTimer <= 0) resetGame();
       }, { passive: false });
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && game.musicStarted) primeAudio();
+      });
 
       window.addEventListener('keyup', (e) => {
         keys[e.code] = false;
