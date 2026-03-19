@@ -7,16 +7,15 @@
   <style>
     :root {
       --bg: #0d1020;
-      --panel: rgba(8, 10, 20, 0.86);
-      --line: rgba(255,255,255,0.12);
-      --gold: #ffd54a;
-      --red: #ff5d73;
-      --blue: #5ad1ff;
-      --ink: #f4f7fb;
-      --game-width: 360px;
-      --game-height: 640px;
+      --ink: #f5f6fb;
+      --gold: #ffd75a;
+      --cyan: #63d8ff;
+      --red: #ff667f;
+      --jade: #5dffb2;
       --shell-radius: 24px;
       --shell-shadow: 0 20px 60px rgba(0,0,0,0.45);
+      --game-width: 360px;
+      --game-height: 640px;
     }
 
     * { box-sizing: border-box; }
@@ -26,15 +25,14 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background:
-        radial-gradient(circle at top, #1d2954 0%, #0c1122 45%, #05070d 100%);
+      background: radial-gradient(circle at top, #1d2954 0%, #0c1122 45%, #05070d 100%);
       color: var(--ink);
       font-family: Arial, Helvetica, sans-serif;
       touch-action: none;
-      overscroll-behavior: none;
       user-select: none;
       -webkit-user-select: none;
       -webkit-touch-callout: none;
+      overscroll-behavior: none;
     }
 
     body {
@@ -46,18 +44,14 @@
 
     #shell {
       position: relative;
-      width: min(
-        var(--game-width),
-        100%,
-        calc(100vh * 0.5625)
-      );
+      width: min(var(--game-width), 100%, calc(100vh * 0.5625));
       aspect-ratio: 9 / 16;
       max-width: var(--game-width);
       max-height: var(--game-height);
-      border-radius: var(--shell-radius);
       overflow: hidden;
-      box-shadow: var(--shell-shadow);
+      border-radius: var(--shell-radius);
       border: 1px solid rgba(255,255,255,0.12);
+      box-shadow: var(--shell-shadow);
       background: #000;
     }
 
@@ -70,22 +64,25 @@
       touch-action: none;
     }
 
-    #hint {
+    #hint, #audioBadge {
       position: absolute;
       left: 50%;
-      bottom: 10px;
       transform: translateX(-50%);
-      font-size: 12px;
+      font-size: 11px;
       letter-spacing: 0.08em;
-      color: rgba(255,255,255,0.72);
-      background: rgba(0,0,0,0.25);
-      border: 1px solid rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.8);
+      background: rgba(5,8,16,0.55);
+      border: 1px solid rgba(255,255,255,0.1);
       border-radius: 999px;
       padding: 6px 10px;
       pointer-events: none;
+      white-space: nowrap;
     }
 
-    @media (max-width: 640px), (pointer: coarse) {
+    #hint { bottom: 10px; }
+    #audioBadge { top: 10px; }
+
+    @media (max-width: 680px), (pointer: coarse) {
       #hint { display: none; }
     }
   </style>
@@ -93,7 +90,8 @@
 <body>
   <div id="shell" aria-label="Kung Fu Brawler game container">
     <canvas id="game" width="360" height="640" aria-label="Kung Fu Brawler"></canvas>
-    <div id="hint">Move: ← → / A D · Jump: ↑ / W / Space · Punch: J / K / X</div>
+    <div id="audioBadge">TAP TO START AUDIO</div>
+    <div id="hint">Move: ← → / A D · Jump: ↑ / W / Space · Punch: J · Kick: K / X · Parry: P / Shift</div>
   </div>
 
   <script>
@@ -101,275 +99,977 @@
       'use strict';
 
       const canvas = document.getElementById('game');
+      const badge = document.getElementById('audioBadge');
       const ctx = canvas.getContext('2d');
       ctx.imageSmoothingEnabled = false;
 
       const W = 360;
       const H = 640;
-      const GROUND_Y = 548;
       const TARGET_FPS = 60;
       const FIXED_DT = 1 / TARGET_FPS;
-      const FRAME_TIME_MS = 1000 / TARGET_FPS;
+      const FRAME_MS = 1000 / TARGET_FPS;
       const MAX_FRAME_DELTA_MS = 100;
       const MAX_UPDATE_STEPS = 5;
-      const PLAYER_MIN_X = 24;
-      const PLAYER_MAX_X_PADDING = 32;
-      const SPAWN_INTERVAL_MIN = 0.52;
-      const SPAWN_INTERVAL_START = 1.25;
-      const SPAWN_INTERVAL_RAMP = 0.015;
-      const CONTROL_Y = H - 70;
-      const CONTROL_CLUSTER_GAP = 66;
-      const CONTROL_EDGE_OFFSET = 60;
-      const CONTROL_LEFT_X = CONTROL_EDGE_OFFSET;
-      const CONTROL_RIGHT_X = CONTROL_LEFT_X + CONTROL_CLUSTER_GAP;
-      const CONTROL_ATTACK_X = W - CONTROL_EDGE_OFFSET;
-      const CONTROL_JUMP_X = CONTROL_ATTACK_X - CONTROL_CLUSTER_GAP;
-      const CONTROL_BUTTON_RADIUS = 28;
-      const CONTROL_ATTACK_RADIUS = 30;
-      const CONTROL_HIT_RADIUS = 34;
-      const CONTROL_ATTACK_HIT_RADIUS = 36;
+
+      const CONFIG = {
+        world: {
+          width: W,
+          height: H,
+          groundY: 548,
+          playerMinX: 18,
+          playerMaxXPadding: 28,
+          projectileCullMargin: 30,
+          enemyCullX: -120,
+          safeAreaBase: { top: 10, right: 10, bottom: 10, left: 10 },
+          mobileControlBottomBase: 70,
+          mobileControlBottomSafeBoost: 18,
+          safeAreaScale: 160
+        },
+        player: {
+          size: { w: 36, h: 82 },
+          startX: 74,
+          speed: 242,
+          jumpPower: 476,
+          gravity: 1200,
+          moveAccelGround: 1050,
+          moveAccelAir: 700,
+          moveSpeedThreshold: 18,
+          moveStateThreshold: 22,
+          attackMoveFactor: { punch: 0.42, kick: 0.32 },
+          parryMoveFactor: 0.48,
+          parryWindow: 0.26,
+          parryCooldown: 0.36,
+          parrySuccessTime: 0.2,
+          counterWindow: 0.9,
+          parryInvuln: 0.1,
+          hurtTimer: 0.24,
+          hurtFlash: 0.18,
+          projectileInvuln: 0.38,
+          meleeInvuln: 0.45,
+          knockbackX: 112,
+          knockbackY: -74,
+          deathTimer: 0.8,
+          scorePulse: 0.22,
+          comboDecay: 1.1,
+          comboTimer: 0.55,
+          health: 100,
+          jumpLockAttack: true,
+          attackCooldowns: { punch: 0.15, kick: 0.42 },
+          attacks: {
+            punch: {
+              duration: 0.22,
+              windup: 0.05,
+              activeEnd: 0.13,
+              recover: 0.18,
+              range: 36,
+              y: 14,
+              h: 22,
+              damage: 16,
+              knock: 118,
+              color: '#ffd75a',
+              strikeState: 'punch',
+              counterBonus: 7,
+              burstCount: 8
+            },
+            kick: {
+              duration: 0.34,
+              windup: 0.1,
+              activeEnd: 0.2,
+              recover: 0.34,
+              range: 52,
+              y: 34,
+              h: 18,
+              damage: 26,
+              knock: 160,
+              color: '#ff667f',
+              strikeState: 'kick',
+              counterBonus: 10,
+              burstCount: 12
+            }
+          }
+        },
+        enemyBalance: {
+          meleeExtraRange: 4,
+          rangedIdealPaddingFar: 24,
+          rangedIdealPaddingNear: 18,
+          agileDodgeDistance: 80,
+          agileDodgeDuration: 0.18,
+          agileDodgeSpeed: 185,
+          rangedShootCooldown: 1.08,
+          meleeApproachDecel: 1200,
+          hurtFriction: 0.93,
+          stunRecoverAccel: 900,
+          defaultAttackResetCooldown: 0.95,
+          heavyParryStun: 0.62,
+          defaultParryStun: 0.92,
+          agileParryCooldown: 0.7,
+          defaultParryCooldown: 0.95,
+          projectileSpeed: 182,
+          projectileLift: -14,
+          projectileGravity: 38,
+          projectileLife: 2.6,
+          projectileDamage: 8,
+          projectileParrySpeedScale: -1.2,
+          projectileParryLift: -22,
+          projectileParryDamage: 18,
+          projectileParryKnockBoost: 0.9,
+          projectileParryCounterWindow: 0.9,
+          meleeStrikeHitbox: {
+            offsetNear: -20,
+            forwardInset: 4,
+            y: 18,
+            heavyW: 30,
+            defaultW: 24,
+            agileH: 18,
+            defaultH: 22
+          }
+        },
+        spawn: {
+          initialTimer: 0.8,
+          initialInterval: 1.15,
+          minInterval: 0.5,
+          difficultyRamp: 0.012,
+          intervalBase: 1.22,
+          jitterMin: 0.84,
+          jitterMax: 1.16,
+          spawnOffsetMin: 10,
+          spawnOffsetMax: 90,
+          maxAliveByScore: [
+            { score: 150, cap: 7 },
+            { score: 80, cap: 6 },
+            { score: -1, cap: 5 }
+          ]
+        },
+        fx: {
+          cameraShakeDecay: 18,
+          hitShake: 3.5,
+          heavyHitShake: 5.5,
+          parryShake: 4.5,
+          playerHitShake: 5.5,
+          particleFriction: 0.986,
+          maxParticles: 320,
+          flashParry: { alpha: 0.25, life: 0.08 },
+          flashCounter: { alpha: 0.12, life: 0.06 },
+          flashProjectileParry: { alpha: 0.2, life: 0.07 },
+          flashHitboxKick: 'rgba(255,102,127,0.14)',
+          flashHitboxPunch: 'rgba(255,225,120,0.13)'
+        },
+        ui: {
+          overlayReadyDelay: 0.35,
+          comboFade: 0.55,
+          counterMeterW: 112,
+          parryMeterW: 90,
+          hudY: { combo: 96, controls: H - 126 }
+        },
+        animation: {
+          walkRateMoving: 12,
+          walkRateIdle: 4,
+          bobRateMoving: 10,
+          bobRateIdle: 3,
+          backgroundLanternSway: 1.8,
+          bodyIdleBobRate: 3.6,
+          enemyWalkRate: 9,
+          attackGraceTime: 0.05,
+          stateClampFloor: 0,
+          maxStateStep: 0.2
+        },
+        haptics: {
+          attackMs: 14,
+          kickMs: 18,
+          parryMs: 24,
+          hitMs: 20,
+          deathMs: 36
+        },
+        audio: {
+          masterGain: 0.35,
+          musicGain: 0.42,
+          sfxGain: 0.9,
+          lookahead: 0.18,
+          schedulerMs: 70,
+          tempo: 132,
+          stopTail: 0.02,
+          kickTail: 0.1
+        },
+        seeds: {
+          default: 0xC0FFEE12
+        }
+      };
+
+      const GROUND_Y = CONFIG.world.groundY;
+      const palette = {
+        skyTop: '#17295a',
+        skyBottom: '#060915',
+        lantern: '#ffd75a',
+        moon: '#e9f3ff',
+        cityA: '#111a34',
+        cityB: '#1a2444',
+        cityC: '#0b1121',
+        groundA: '#191c30',
+        groundB: '#242941',
+        floorLine: 'rgba(128, 178, 255, 0.18)',
+        player: '#ffd04f',
+        playerDark: '#6d4914',
+        playerTrim: '#fff1c2',
+        normal: '#ff7078',
+        agile: '#79f1ff',
+        heavy: '#9c88ff',
+        ranged: '#7eff94',
+        elite: '#ff9b5e',
+        white: '#f7fbff',
+        black: '#06080c',
+        red: '#ff5d73',
+        gold: '#ffe178',
+        cyan: '#67dbff',
+        green: '#7dffb0',
+        purple: '#b19bff',
+        shadow: 'rgba(0,0,0,0.28)'
+      };
+      CONFIG.player.attacks.punch.color = palette.gold;
+      CONFIG.player.attacks.kick.color = palette.red;
 
       const keys = Object.create(null);
-      const touchState = { left: false, right: false, jump: false, attack: false };
       const pointers = new Map();
-
-      const controls = {
-        left: { key: 'left', x: CONTROL_LEFT_X, y: CONTROL_Y, r: CONTROL_BUTTON_RADIUS, hitR: CONTROL_HIT_RADIUS, label: '◀' },
-        right: { key: 'right', x: CONTROL_RIGHT_X, y: CONTROL_Y, r: CONTROL_BUTTON_RADIUS, hitR: CONTROL_HIT_RADIUS, label: '▶' },
-        jump: { key: 'jump', x: CONTROL_JUMP_X, y: CONTROL_Y, r: CONTROL_BUTTON_RADIUS, hitR: CONTROL_HIT_RADIUS, label: '▲' },
-        attack: { key: 'attack', x: CONTROL_ATTACK_X, y: CONTROL_Y, r: CONTROL_ATTACK_RADIUS, hitR: CONTROL_ATTACK_HIT_RADIUS, label: '●' }
-      };
-      const controlList = Object.values(controls);
-
-      const palette = {
-        skyTop: '#162451',
-        skyBottom: '#070b15',
-        cityA: '#10182f',
-        cityB: '#172142',
-        floor: '#1b1d2d',
-        floorLine: '#2d3150',
-        neonA: '#46d2ff',
-        neonB: '#ff4d88',
-        hero: '#ffd34d',
-        heroDark: '#5a3a15',
-        enemy: '#ff6b6b',
-        enemyDark: '#531f28',
-        white: '#f7fbff',
-        black: '#05070a',
-        shadow: 'rgba(0,0,0,0.25)',
-        hit: '#ffffff',
-        hp: '#ff5d73',
-        hpBack: 'rgba(255,255,255,0.14)',
-        score: '#ffe37a'
-      };
+      const touchState = { left: false, right: false, jump: false, punch: false, kick: false, parry: false, mute: false };
 
       function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
-      function rectsOverlap(a, b) {
-        return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-      }
+      function sign(v) { return v < 0 ? -1 : 1; }
       function approach(current, target, delta) {
         if (current < target) return Math.min(target, current + delta);
         if (current > target) return Math.max(target, current - delta);
         return current;
       }
-      function rand(min, max) { return Math.random() * (max - min) + min; }
+      function rectsOverlap(a, b) {
+        return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+      }
 
-      function createPlayer() {
+      class SeededRNG {
+        constructor(seed) {
+          this.setSeed(seed);
+        }
+        setSeed(seed) {
+          this.seed = (seed >>> 0) || CONFIG.seeds.default;
+        }
+        next() {
+          let x = this.seed;
+          x ^= x << 13;
+          x ^= x >>> 17;
+          x ^= x << 5;
+          this.seed = x >>> 0;
+          return this.seed / 4294967296;
+        }
+        range(min, max) {
+          return this.next() * (max - min) + min;
+        }
+        chance(prob) {
+          return this.next() < prob;
+        }
+        int(min, maxExclusive) {
+          return Math.floor(this.range(min, maxExclusive));
+        }
+      }
+
+      const sessionSeed = (() => {
+        const params = new URLSearchParams(window.location.search);
+        const fromQuery = Number(params.get('seed'));
+        if (Number.isFinite(fromQuery) && fromQuery > 0) return fromQuery >>> 0;
+        const timeSeed = (Date.now() ^ ((screen.width || W) << 8) ^ (screen.height || H)) >>> 0;
+        return timeSeed || CONFIG.seeds.default;
+      })();
+      const rng = new SeededRNG(sessionSeed);
+
+      function rand(min, max) { return rng.range(min, max); }
+      function chance(prob) { return rng.chance(prob); }
+
+      const safeArea = { top: 0, right: 0, bottom: 0, left: 0, isLandscape: false };
+      function readSafeInset(side) {
+        const probe = document.createElement('div');
+        probe.style.position = 'absolute';
+        probe.style.visibility = 'hidden';
+        probe.style.pointerEvents = 'none';
+        probe.style[side === 'top' || side === 'bottom' ? 'height' : 'width'] = `env(safe-area-inset-${side})`;
+        document.body.appendChild(probe);
+        const rect = probe.getBoundingClientRect();
+        probe.remove();
+        return Math.round(side === 'top' || side === 'bottom' ? rect.height : rect.width) || 0;
+      }
+      function detectLandscape() {
+        if (window.screen?.orientation?.type) return window.screen.orientation.type.startsWith('landscape');
+        if (typeof window.orientation === 'number') return Math.abs(window.orientation) === 90;
+        return window.innerWidth > window.innerHeight;
+      }
+      function updateSafeArea() {
+        safeArea.top = readSafeInset('top');
+        safeArea.right = readSafeInset('right');
+        safeArea.bottom = readSafeInset('bottom');
+        safeArea.left = readSafeInset('left');
+        safeArea.isLandscape = detectLandscape();
+      }
+      updateSafeArea();
+
+      const controls = {
+        left:  { key: 'left',  x: 56,  y: 0, r: 26, hitR: 34, label: '◀', color: 'rgba(255,255,255,0.14)' },
+        right: { key: 'right', x: 118, y: 0, r: 26, hitR: 34, label: '▶', color: 'rgba(255,255,255,0.14)' },
+        jump:  { key: 'jump',  x: 202, y: 0, r: 24, hitR: 32, label: '▲', color: 'rgba(99,216,255,0.18)' },
+        parry: { key: 'parry', x: 255, y: 0, r: 23, hitR: 31, label: 'P', color: 'rgba(125,255,176,0.16)' },
+        punch: { key: 'punch', x: 306, y: 0, r: 21, hitR: 30, label: 'J', color: 'rgba(255,215,90,0.18)' },
+        kick:  { key: 'kick',  x: 306, y: 0, r: 24, hitR: 33, label: 'K', color: 'rgba(255,102,127,0.18)' },
+        mute:  { key: 'mute',  x: 326, y: 34, r: 17, hitR: 24, label: '♪', color: 'rgba(255,255,255,0.12)' }
+      };
+      const controlList = Object.values(controls);
+
+      function layoutControls() {
+        const isLandscape = safeArea.isLandscape;
+        const bottomOffset = isLandscape
+          ? CONFIG.world.mobileControlBottomBase + Math.min(18, safeArea.bottom * 0.25)
+          : CONFIG.world.mobileControlBottomBase + Math.min(36, safeArea.bottom * 0.5 + CONFIG.world.mobileControlBottomSafeBoost);
+        const baseY = H - bottomOffset;
+        const leftClusterInset = 56 + Math.min(26, safeArea.left * (isLandscape ? 0.9 : 0.4));
+        const rightClusterInset = 54 + Math.min(28, safeArea.right * (isLandscape ? 0.95 : 0.45));
+        controls.left.x = leftClusterInset;
+        controls.right.x = leftClusterInset + (isLandscape ? 56 : 62);
+        controls.jump.x = W - rightClusterInset - (isLandscape ? 112 : 104);
+        controls.parry.x = W - rightClusterInset - (isLandscape ? 58 : 51);
+        controls.punch.x = W - rightClusterInset;
+        controls.kick.x = W - rightClusterInset + (isLandscape ? -2 : 0);
+        controls.left.y = baseY;
+        controls.right.y = baseY;
+        controls.jump.y = baseY;
+        controls.parry.y = baseY;
+        controls.punch.y = baseY - (isLandscape ? 24 : 32);
+        controls.kick.y = baseY + (isLandscape ? 22 : 30);
+        controls.mute.x = W - 34 - Math.min(22, safeArea.right * 0.5);
+        controls.mute.y = 34 + Math.min(20, safeArea.top * (isLandscape ? 0.15 : 0.25));
+      }
+      layoutControls();
+
+      function haptic(ms) {
+        if (navigator.vibrate) navigator.vibrate(ms);
+      }
+
+      function makePlayer() {
         return {
-          x: 74,
-          y: GROUND_Y - 78,
-          w: 36,
-          h: 78,
+          x: CONFIG.player.startX,
+          y: GROUND_Y - CONFIG.player.size.h,
+          w: CONFIG.player.size.w,
+          h: CONFIG.player.size.h,
           vx: 0,
           vy: 0,
           dir: 1,
-          speed: 235,
-          jumpPower: 470,
-          gravity: 1180,
+          speed: CONFIG.player.speed,
+          jumpPower: CONFIG.player.jumpPower,
+          gravity: CONFIG.player.gravity,
           onGround: true,
-          health: 100,
-          maxHealth: 100,
-          attackTimer: 0,
-          attackCooldown: 0,
-          attackDuration: 0.19,
-          attackWindowStart: 0.04,
-          attackWindowEnd: 0.13,
-          attackPressedLatch: false,
+          health: CONFIG.player.health,
+          maxHealth: CONFIG.player.health,
+          alive: true,
+          state: 'idle',
+          stateTime: 0,
+          attack: null,
+          attackCooldowns: { punch: 0, kick: 0 },
+          attackLatch: { punch: false, kick: false },
+          jumpLatch: false,
+          parryLatch: false,
+          parryTimer: 0,
+          parryCooldown: 0,
+          parrySuccess: 0,
+          counterWindow: 0,
+          invuln: 0,
           hurtTimer: 0,
           hitFlash: 0,
-          invuln: 0,
-          bob: 0,
-          comboPulse: 0,
-          alive: true
+          deathTimer: 0,
+          walkCycle: 0,
+          bobPhase: 0,
+          scorePulse: 0,
+          lastGrounded: true,
+          animationTime: 0
         };
       }
 
-      function createEnemy(scoreScale = 0) {
-        const elite = Math.random() < Math.min(0.35, scoreScale * 0.018);
-        const w = elite ? 42 : 34;
-        const h = elite ? 86 : 76;
-        const health = elite ? 52 : 30;
+      function enemyTemplate(type) {
+        const map = {
+          normal: {
+            w: 34, h: 76, health: 34, speed: [90, 116], range: 42, windup: 0.5, cooldown: 0.9,
+            damage: 10, worth: 12, color: palette.normal, dark: '#5d2530', projectile: false, poise: 1,
+            telegraph: 0.13, dodgeChance: 0
+          },
+          elite: {
+            w: 42, h: 86, health: 58, speed: [76, 96], range: 48, windup: 0.46, cooldown: 0.82,
+            damage: 14, worth: 26, color: palette.elite, dark: '#6c3217', projectile: false, poise: 2,
+            telegraph: 0.15, dodgeChance: 0.08
+          },
+          agile: {
+            w: 30, h: 70, health: 24, speed: [146, 178], range: 36, windup: 0.25, cooldown: 0.56,
+            damage: 7, worth: 18, color: palette.agile, dark: '#20495a', projectile: false, poise: 0.5,
+            telegraph: 0.08, dodgeChance: 0.22
+          },
+          heavy: {
+            w: 48, h: 94, health: 94, speed: [54, 68], range: 54, windup: 0.7, cooldown: 1.14,
+            damage: 20, worth: 34, color: palette.heavy, dark: '#35286b', projectile: false, poise: 3,
+            telegraph: 0.18, dodgeChance: 0
+          },
+          ranged: {
+            w: 34, h: 78, health: 28, speed: [72, 90], range: 120, windup: 0.58, cooldown: 1.08,
+            damage: 8, worth: 22, color: palette.ranged, dark: '#1b4b2c', projectile: true, poise: 1,
+            telegraph: 0.16, dodgeChance: 0.05
+          }
+        };
+        return map[type];
+      }
+
+      function chooseEnemyType(score) {
+        const roll = rng.next();
+        let type = 'normal';
+        if (score > 30 && roll < 0.18) type = 'agile';
+        else if (score > 55 && roll < 0.34) type = 'ranged';
+        else if (score > 90 && roll < 0.48) type = 'heavy';
+        else if (score > 130 && roll < 0.58) type = 'elite';
+        else if (score > 45 && roll < 0.32) type = rng.next() < 0.5 ? 'agile' : 'ranged';
+        else if (score > 12 && roll < 0.18) type = 'agile';
+        return type;
+      }
+
+      function spawnEnemy(score) {
+        const type = chooseEnemyType(score);
+        const t = enemyTemplate(type);
+        const speed = rand(t.speed[0], t.speed[1]);
         return {
-          x: W + rand(20, 120),
-          y: GROUND_Y - h,
-          w,
-          h,
+          type,
+          x: W + rand(CONFIG.spawn.spawnOffsetMin, CONFIG.spawn.spawnOffsetMax),
+          y: GROUND_Y - t.h,
+          w: t.w,
+          h: t.h,
           vx: 0,
           vy: 0,
           dir: -1,
-          speed: elite ? rand(72, 92) : rand(88, 114),
-          health,
-          maxHealth: health,
-          attackRange: elite ? 48 : 42,
-          attackWindup: elite ? 0.52 : 0.62,
-          attackCooldown: rand(0.15, 0.5),
+          speed,
+          baseSpeed: speed,
+          health: t.health,
+          maxHealth: t.health,
+          attackRange: t.range,
+          attackWindup: t.windup,
+          attackCooldown: rand(0.08, 0.4),
           attackTimer: 0,
+          attackPhase: 'ready',
+          state: 'walk',
+          stateTime: 0,
           hurtTimer: 0,
           hitFlash: 0,
           dead: false,
-          deathTimer: 0,
-          worth: elite ? 25 : 10,
-          elite
+          deathTimer: 0.55,
+          damage: t.damage,
+          worth: t.worth,
+          color: t.color,
+          dark: t.dark,
+          poise: t.poise,
+          dodgeChance: t.dodgeChance,
+          projectile: t.projectile,
+          telegraph: t.telegraph,
+          stunTimer: 0,
+          dodgeTimer: 0,
+          shootCooldown: 0,
+          lastKnownPlayerX: 0,
+          animationTime: 0,
+          walkCycle: rand(0, Math.PI * 2)
         };
       }
 
+      function createParticlePool(size) {
+        const free = [];
+        const active = [];
+        for (let i = 0; i < size; i++) {
+          free.push({ active: false, x: 0, y: 0, color: '#fff', size: 2, life: 0, maxLife: 0, vx: 0, vy: 0, gravity: 0, alphaBucket: 1 });
+        }
+        return { free, active, capacity: size };
+      }
+
       const game = {
-        player: createPlayer(),
+        seed: sessionSeed,
+        player: makePlayer(),
         enemies: [],
-        particles: [],
+        projectiles: [],
+        particlePool: createParticlePool(CONFIG.fx.maxParticles),
+        flashes: [],
         score: 0,
         time: 0,
-        spawnTimer: 0.9,
-        spawnInterval: 1.2,
+        spawnTimer: CONFIG.spawn.initialTimer,
+        spawnInterval: CONFIG.spawn.initialInterval,
         comboText: '',
         comboTimer: 0,
+        comboCount: 0,
+        comboDecay: 0,
         gameOver: false,
         restartTimer: 0,
         cameraShake: 0,
         lastTs: 0,
-        accumulatorMs: 0
+        accumulatorMs: 0,
+        muted: false,
+        musicReady: false,
+        musicStarted: false,
+        runtimeError: ''
       };
 
       function resetGame() {
-        game.player = createPlayer();
+        rng.setSeed(sessionSeed);
+        updateSafeArea();
+        layoutControls();
+        game.player = makePlayer();
         game.enemies = [];
-        game.particles = [];
+        game.projectiles = [];
+        game.particlePool.active.length = 0;
+        while (game.particlePool.active.length) game.particlePool.free.push(game.particlePool.active.pop());
+        game.flashes = [];
         game.score = 0;
         game.time = 0;
-        game.spawnTimer = 0.8;
-        game.spawnInterval = 1.2;
+        game.spawnTimer = CONFIG.spawn.initialTimer;
+        game.spawnInterval = CONFIG.spawn.initialInterval;
         game.comboText = '';
         game.comboTimer = 0;
+        game.comboCount = 0;
+        game.comboDecay = 0;
         game.gameOver = false;
         game.restartTimer = 0;
         game.cameraShake = 0;
         game.lastTs = 0;
         game.accumulatorMs = 0;
+        game.runtimeError = '';
       }
 
-      function inputAxis() {
-        const left = keys.ArrowLeft || keys.KeyA || touchState.left;
-        const right = keys.ArrowRight || keys.KeyD || touchState.right;
-        return (right ? 1 : 0) - (left ? 1 : 0);
+      class TinyMusic {
+        constructor() {
+          this.ctx = null;
+          this.master = null;
+          this.musicGain = null;
+          this.sfxGain = null;
+          this.started = false;
+          this.lookahead = CONFIG.audio.lookahead;
+          this.nextTime = 0;
+          this.step = 0;
+          this.timer = null;
+          this.tempo = CONFIG.audio.tempo;
+          this.scale = {
+            C4: 261.63, D4: 293.66, E4: 329.63, G4: 392.0, A4: 440.0,
+            C5: 523.25, D5: 587.33, E5: 659.25, G5: 783.99, A5: 880.0
+          };
+          this.melody = [
+            'G5','A5','E5','D5','E5','G5','A5','E5',
+            'D5','E5','G5','E5','D5','C5','D5','E5',
+            'G5','A5','E5','D5','E5','G5','D5','E5',
+            'A4','C5','D5','E5','D5','C5','A4',null
+          ];
+          this.bass = [
+            'A4',null,'E4',null,'D4',null,'E4',null,
+            'A4',null,'E4',null,'D4',null,'C4',null
+          ];
+        }
+        ensure() {
+          if (this.ctx) return true;
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) return false;
+          try {
+            this.ctx = new AC();
+            this.master = this.ctx.createGain();
+            this.musicGain = this.ctx.createGain();
+            this.sfxGain = this.ctx.createGain();
+            this.master.gain.value = game.muted ? 0 : CONFIG.audio.masterGain;
+            this.musicGain.gain.value = CONFIG.audio.musicGain;
+            this.sfxGain.gain.value = CONFIG.audio.sfxGain;
+            this.musicGain.connect(this.master);
+            this.sfxGain.connect(this.master);
+            this.master.connect(this.ctx.destination);
+            game.musicReady = true;
+            return true;
+          } catch (err) {
+            console.error('Audio context init failed', err);
+            this.ctx = null;
+            this.master = null;
+            this.musicGain = null;
+            this.sfxGain = null;
+            game.musicReady = false;
+            return false;
+          }
+        }
+        async start() {
+          if (!this.ensure()) return;
+          if (this.ctx.state === 'suspended') await this.ctx.resume();
+          if (this.started) return;
+          this.started = true;
+          game.musicStarted = true;
+          this.nextTime = this.ctx.currentTime + 0.05;
+          this.scheduleLoop();
+        }
+        setMuted(muted) {
+          game.muted = muted;
+          if (this.master) this.master.gain.value = muted ? 0 : CONFIG.audio.masterGain;
+        }
+        scheduleLoop() {
+          if (!this.ctx) return;
+          const beat = 60 / this.tempo / 2;
+          while (this.nextTime < this.ctx.currentTime + this.lookahead) {
+            const i = this.step % this.melody.length;
+            const bassI = this.step % this.bass.length;
+            const note = this.melody[i];
+            const bass = this.bass[bassI];
+            if (note) this.playSquare(this.scale[note], this.nextTime, beat * 0.84, 0.055, 'melody');
+            if (bassI % 2 === 0 && bass) this.playSquare(this.scale[bass] / 2, this.nextTime, beat * 1.2, 0.05, 'bass');
+            if (this.step % 2 === 0) this.playNoiseHat(this.nextTime, 0.018, 0.024);
+            if (this.step % 8 === 0) this.playKick(this.nextTime, 0.045);
+            this.step++;
+            this.nextTime += beat;
+          }
+          this.timer = setTimeout(() => this.scheduleLoop(), CONFIG.audio.schedulerMs);
+        }
+        cleanupNode(node, time) {
+          if (!node) return;
+          node.onended = null;
+          try { node.stop(time); } catch (_) {}
+          node.onended = () => {
+            try { node.disconnect(); } catch (_) {}
+          };
+        }
+        connectTransient(source, chain, output, stopTime) {
+          if (!source || !output) return;
+          let prev = source;
+          try {
+            for (const node of chain) {
+              prev.connect(node);
+              prev = node;
+            }
+            prev.connect(output);
+          } catch (err) {
+            console.error('Transient audio connect failed', err);
+            try { source.disconnect?.(); } catch (_) {}
+            for (const node of chain) {
+              try { node.disconnect?.(); } catch (_) {}
+            }
+            return;
+          }
+          const transientNodes = [source, ...chain];
+          let cleaned = false;
+          const cleanup = () => {
+            if (cleaned) return;
+            cleaned = true;
+            for (const node of transientNodes) {
+              try { node.onended = null; } catch (_) {}
+              try { node.disconnect(); } catch (_) {}
+            }
+          };
+          if ('onended' in source) source.onended = cleanup;
+          if (typeof stopTime === 'number' && this.ctx) {
+            const now = this.ctx.currentTime;
+            const safeStopTime = Math.max(stopTime, now + 0.001);
+            try {
+              source.stop(safeStopTime);
+            } catch (err) {
+              console.warn('Transient audio stop fallback', err);
+              cleanup();
+              return;
+            }
+            setTimeout(cleanup, Math.max(0, (safeStopTime - now) * 1000 + 80));
+          }
+        }
+        createNoiseBuffer(duration) {
+          const buffer = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * duration), this.ctx.sampleRate);
+          const data = buffer.getChannelData(0);
+          for (let i = 0; i < data.length; i++) data[i] = (rng.next() * 2 - 1) * (1 - i / data.length);
+          return buffer;
+        }
+        playSquare(freq, time, duration, gain = 0.06, mode = 'melody') {
+          if (!this.ctx || game.muted) return;
+          const osc = this.ctx.createOscillator();
+          const g = this.ctx.createGain();
+          osc.type = mode === 'bass' ? 'triangle' : 'square';
+          osc.frequency.setValueAtTime(freq, time);
+          g.gain.setValueAtTime(0.0001, time);
+          g.gain.linearRampToValueAtTime(gain, time + 0.008);
+          g.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+          this.connectTransient(osc, [g], this.musicGain, time + duration + CONFIG.audio.stopTail);
+          osc.start(time);
+        }
+        playNoiseHat(time, duration = 0.02, gain = 0.02) {
+          if (!this.ctx || game.muted) return;
+          const src = this.ctx.createBufferSource();
+          const filter = this.ctx.createBiquadFilter();
+          const g = this.ctx.createGain();
+          src.buffer = this.createNoiseBuffer(duration);
+          filter.type = 'highpass';
+          filter.frequency.value = 2500;
+          g.gain.value = gain;
+          this.connectTransient(src, [filter, g], this.musicGain, time + duration + CONFIG.audio.stopTail);
+          src.start(time);
+        }
+        playKick(time, gain = 0.05) {
+          if (!this.ctx || game.muted) return;
+          const osc = this.ctx.createOscillator();
+          const g = this.ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(120, time);
+          osc.frequency.exponentialRampToValueAtTime(44, time + 0.08);
+          g.gain.setValueAtTime(gain, time);
+          g.gain.exponentialRampToValueAtTime(0.0001, time + CONFIG.audio.kickTail);
+          this.connectTransient(osc, [g], this.musicGain, time + CONFIG.audio.kickTail);
+          osc.start(time);
+        }
+        sfx(type) {
+          if (!this.ensure() || game.muted) return;
+          const now = this.ctx.currentTime;
+          if (type === 'punch') {
+            this.tone(now, 180, 110, 0.06, 'square', 0.06);
+            this.noise(now, 0.05, 0.028, 1100, 0.04);
+          } else if (type === 'kick') {
+            this.tone(now, 150, 72, 0.1, 'triangle', 0.08);
+            this.noise(now, 0.06, 0.03, 900, 0.05);
+          } else if (type === 'hurt') {
+            this.tone(now, 200, 90, 0.12, 'sawtooth', 0.05);
+          } else if (type === 'parry') {
+            this.tone(now, 520, 880, 0.12, 'square', 0.08);
+            this.tone(now + 0.015, 660, 1180, 0.14, 'triangle', 0.05);
+          } else if (type === 'death') {
+            this.tone(now, 220, 70, 0.22, 'square', 0.06);
+          } else if (type === 'throw') {
+            this.tone(now, 460, 220, 0.08, 'triangle', 0.05);
+          }
+        }
+        tone(time, from, to, duration, wave, gain) {
+          if (!this.ctx) return;
+          const osc = this.ctx.createOscillator();
+          const g = this.ctx.createGain();
+          osc.type = wave;
+          osc.frequency.setValueAtTime(from, time);
+          osc.frequency.exponentialRampToValueAtTime(Math.max(1, to), time + duration);
+          g.gain.setValueAtTime(gain, time);
+          g.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+          this.connectTransient(osc, [g], this.sfxGain, time + duration + CONFIG.audio.stopTail);
+          osc.start(time);
+        }
+        noise(time, duration, gain, cutoff, q) {
+          if (!this.ctx) return;
+          const src = this.ctx.createBufferSource();
+          const filter = this.ctx.createBiquadFilter();
+          const g = this.ctx.createGain();
+          src.buffer = this.createNoiseBuffer(duration);
+          filter.type = 'bandpass';
+          filter.frequency.value = cutoff;
+          filter.Q.value = q;
+          g.gain.value = gain;
+          this.connectTransient(src, [filter, g], this.sfxGain, time + duration + CONFIG.audio.stopTail);
+          src.start(time);
+        }
       }
 
-      function jumpPressed() {
-        return !!(keys.ArrowUp || keys.KeyW || keys.Space || touchState.jump);
+      const audio = new TinyMusic();
+
+      function pressLeft() { return !!(keys.ArrowLeft || keys.KeyA || touchState.left); }
+      function pressRight() { return !!(keys.ArrowRight || keys.KeyD || touchState.right); }
+      function pressJump() { return !!(keys.ArrowUp || keys.KeyW || keys.Space || touchState.jump); }
+      function pressPunch() { return !!(keys.KeyJ || touchState.punch); }
+      function pressKick() { return !!(keys.KeyK || keys.KeyX || touchState.kick); }
+      function pressParry() { return !!(keys.KeyP || keys.ShiftLeft || keys.ShiftRight || touchState.parry); }
+      function axisInput() { return (pressRight() ? 1 : 0) - (pressLeft() ? 1 : 0); }
+
+      function recycleParticle(index) {
+        const particle = game.particlePool.active[index];
+        if (!particle) return;
+        particle.active = false;
+        const last = game.particlePool.active.pop();
+        if (index < game.particlePool.active.length) game.particlePool.active[index] = last;
+        game.particlePool.free.push(particle);
       }
 
-      function attackPressed() {
-        return !!(keys.KeyJ || keys.KeyK || keys.KeyX || touchState.attack);
+      function spawnParticle(x, y, color, size, life, vx, vy, gravity = 220) {
+        const pool = game.particlePool;
+        let particle = pool.free.pop();
+        if (!particle) {
+          if (!pool.active.length) return;
+          particle = pool.active.shift();
+        }
+        particle.active = true;
+        particle.x = x;
+        particle.y = y;
+        particle.color = color;
+        particle.size = size;
+        particle.life = life;
+        particle.maxLife = life;
+        particle.vx = vx;
+        particle.vy = vy;
+        particle.gravity = gravity;
+        particle.alphaBucket = 1;
+        pool.active.push(particle);
       }
 
-      function triggerAttack() {
+      function burst(x, y, color, count, speedMin, speedMax, sizeMin = 2, sizeMax = 4) {
+        for (let i = 0; i < count; i++) {
+          const ang = rand(-Math.PI, Math.PI);
+          const sp = rand(speedMin, speedMax);
+          spawnParticle(x, y, color, rand(sizeMin, sizeMax), rand(0.12, 0.34), Math.cos(ang) * sp, Math.sin(ang) * sp - 20);
+        }
+      }
+      function flash(color, alpha, life) {
+        game.flashes.push({ color, alpha, life, maxLife: life });
+      }
+
+      function setPlayerState(nextState) {
         const p = game.player;
-        if (!p.alive) return;
-        if (p.attackCooldown > 0 || p.attackTimer > 0) return;
-        p.attackTimer = p.attackDuration;
-        p.attackCooldown = 0.13;
-        p.comboPulse = 0.22;
-      }
-
-      function spawnPunchBurst(x, y, dir) {
-        for (let i = 0; i < 7; i++) {
-          game.particles.push({
-            x: x + rand(-4, 4),
-            y: y + rand(-8, 8),
-            vx: dir * rand(50, 150) + rand(-20, 20),
-            vy: rand(-60, 60),
-            life: rand(0.1, 0.18),
-            maxLife: 0.18,
-            color: i % 2 ? palette.hit : palette.score,
-            size: rand(2, 4)
-          });
+        if (p.state !== nextState) {
+          p.state = nextState;
+          p.stateTime = 0;
         }
       }
 
-      function spawnEnemyBurst(enemy) {
-        for (let i = 0; i < 14; i++) {
-          game.particles.push({
-            x: enemy.x + enemy.w * 0.5,
-            y: enemy.y + enemy.h * 0.45,
-            vx: rand(-150, 150),
-            vy: rand(-140, 50),
-            life: rand(0.25, 0.45),
-            maxLife: 0.45,
-            color: enemy.elite ? palette.neonA : palette.enemy,
-            size: rand(2, 5)
-          });
+      function validatePlayerCombatState() {
+        const p = game.player;
+        if (p.attack && p.attack.timer < -CONFIG.animation.attackGraceTime) p.attack = null;
+        if (p.parryTimer < 0) p.parryTimer = 0;
+        if (!p.alive && p.health > 0) p.alive = true;
+        if (p.alive && p.health <= 0) {
+          p.health = 0;
+          p.alive = false;
+          setPlayerState('dead');
         }
       }
 
-      function spawnHitSpark(x, y, color) {
-        for (let i = 0; i < 8; i++) {
-          game.particles.push({
-            x, y,
-            vx: rand(-120, 120),
-            vy: rand(-120, 70),
-            life: rand(0.14, 0.3),
-            maxLife: 0.3,
-            color,
-            size: rand(2, 4)
-          });
+      function startAttack(type) {
+        const p = game.player;
+        if (!p.alive || p.hurtTimer > 0 || p.attack) return false;
+        const def = CONFIG.player.attacks[type];
+        if (!def || p.attackCooldowns[type] > 0) return false;
+        p.attack = { type, timer: def.duration, hitDone: false, ...def };
+        p.attackCooldowns[type] = CONFIG.player.attackCooldowns[type];
+        setPlayerState(def.strikeState);
+        audio.sfx(type);
+        haptic(type === 'kick' ? CONFIG.haptics.kickMs : CONFIG.haptics.attackMs);
+        return true;
+      }
+
+      function getAttackHitbox() {
+        const p = game.player;
+        if (!p.attack) return null;
+        const a = p.attack;
+        return {
+          x: p.dir > 0 ? p.x + p.w - 4 : p.x - a.range,
+          y: p.y + a.y,
+          w: a.range,
+          h: a.h
+        };
+      }
+
+      function canParryAttack(enemy) {
+        if (enemy.dead || enemy.stunTimer > 0) return false;
+        if (enemy.projectile) return enemy.attackPhase === 'release' || (enemy.attackPhase === 'windup' && enemy.attackTimer >= enemy.attackWindup - 0.08);
+        return enemy.attackPhase === 'windup' && enemy.attackTimer >= enemy.attackWindup - 0.26 && enemy.attackTimer <= enemy.attackWindup + 0.06;
+      }
+
+      function tryParry() {
+        const p = game.player;
+        if (!p.alive || p.parryCooldown > 0) return false;
+        p.parryTimer = CONFIG.player.parryWindow;
+        p.parryCooldown = CONFIG.player.parryCooldown;
+        setPlayerState('parry');
+        haptic(CONFIG.haptics.parryMs);
+        return true;
+      }
+
+      function registerHit(text) {
+        game.comboCount++;
+        game.comboDecay = CONFIG.player.comboDecay;
+        game.comboTimer = CONFIG.player.comboTimer;
+        game.comboText = game.comboCount > 1 ? `COMBO x${game.comboCount}` : text;
+      }
+
+      function damageEnemy(enemy, amount, dir, color, knockBoost = 1) {
+        if (enemy.dead) return;
+        enemy.health -= amount;
+        enemy.hurtTimer = Math.max(enemy.hurtTimer, 0.2);
+        enemy.hitFlash = 0.15;
+        enemy.state = 'hurt';
+        enemy.stateTime = 0;
+        enemy.vx = dir * (90 + amount * 2.2) / Math.max(1, enemy.poise) * knockBoost;
+        burst(enemy.x + enemy.w * 0.5, enemy.y + enemy.h * 0.4, color, 9, 34, 126);
+        game.cameraShake = Math.max(game.cameraShake, amount >= 20 ? CONFIG.fx.heavyHitShake : CONFIG.fx.hitShake);
+        registerHit(amount >= 20 ? 'HEAVY HIT' : 'HIT');
+        if (enemy.health <= 0) {
+          enemy.dead = true;
+          enemy.state = 'dead';
+          enemy.stateTime = 0;
+          enemy.deathTimer = enemy.type === 'heavy' ? 0.78 : 0.58;
+          game.score += enemy.worth;
+          game.player.scorePulse = CONFIG.player.scorePulse;
+          burst(enemy.x + enemy.w * 0.5, enemy.y + enemy.h * 0.45, enemy.color, enemy.type === 'heavy' ? 18 : 12, 50, 190, 2, 5);
+          audio.sfx('death');
         }
       }
 
-      function applyPlayerHit(damage, sourceX) {
+      function applyPlayerHit(damage, sourceX, sourceType = 'melee') {
         const p = game.player;
         if (!p.alive || p.invuln > 0) return;
+        if (p.parryTimer > 0) {
+          p.parrySuccess = CONFIG.player.parrySuccessTime;
+          p.counterWindow = CONFIG.player.counterWindow;
+          p.invuln = CONFIG.player.parryInvuln;
+          flash(palette.white, CONFIG.fx.flashParry.alpha, CONFIG.fx.flashParry.life);
+          burst(p.x + p.w * 0.5, p.y + 26, palette.green, 16, 60, 180);
+          audio.sfx('parry');
+          haptic(CONFIG.haptics.parryMs);
+          game.cameraShake = Math.max(game.cameraShake, CONFIG.fx.parryShake);
+          for (const enemy of game.enemies) {
+            if (enemy.dead) continue;
+            const close = Math.abs((enemy.x + enemy.w * 0.5) - (p.x + p.w * 0.5)) < 58;
+            if (close && canParryAttack(enemy)) {
+              enemy.stunTimer = enemy.type === 'heavy' ? CONFIG.enemyBalance.heavyParryStun : CONFIG.enemyBalance.defaultParryStun;
+              enemy.attackTimer = 0;
+              enemy.attackPhase = 'ready';
+              enemy.attackCooldown = enemy.type === 'agile' ? CONFIG.enemyBalance.agileParryCooldown : CONFIG.enemyBalance.defaultParryCooldown;
+              enemy.state = 'hurt';
+              enemy.stateTime = 0;
+              enemy.vx = sign((enemy.x + enemy.w * 0.5) - (p.x + p.w * 0.5)) * 90;
+            }
+          }
+          return;
+        }
+
         p.health = Math.max(0, p.health - damage);
-        p.hurtTimer = 0.22;
-        p.hitFlash = 0.18;
-        p.invuln = 0.45;
-        p.vx = sourceX < p.x ? 110 : -110;
-        p.vy = -70;
-        game.cameraShake = Math.max(game.cameraShake, 6);
-        spawnHitSpark(p.x + p.w * 0.5, p.y + 24, palette.red);
+        p.hurtTimer = CONFIG.player.hurtTimer;
+        p.hitFlash = CONFIG.player.hurtFlash;
+        p.invuln = sourceType === 'projectile' ? CONFIG.player.projectileInvuln : CONFIG.player.meleeInvuln;
+        p.vx = sourceX < p.x ? CONFIG.player.knockbackX : -CONFIG.player.knockbackX;
+        p.vy = CONFIG.player.knockbackY;
+        setPlayerState('hurt');
+        game.comboCount = 0;
+        game.comboDecay = 0;
+        game.comboText = '';
+        burst(p.x + p.w * 0.5, p.y + 24, palette.red, 10, 40, 140);
+        game.cameraShake = Math.max(game.cameraShake, CONFIG.fx.playerHitShake);
+        audio.sfx('hurt');
+        haptic(CONFIG.haptics.hitMs);
+
         if (p.health <= 0) {
           p.alive = false;
+          setPlayerState('dead');
+          p.deathTimer = CONFIG.player.deathTimer;
           game.gameOver = true;
-          game.restartTimer = 0.4;
+          game.restartTimer = CONFIG.ui.overlayReadyDelay;
+          burst(p.x + p.w * 0.5, p.y + 30, palette.gold, 12, 50, 160);
+          haptic(CONFIG.haptics.deathMs);
         }
-      }
-
-      function attackHitbox() {
-        const p = game.player;
-        return {
-          x: p.dir > 0 ? p.x + p.w - 2 : p.x - 34,
-          y: p.y + 16,
-          w: 34,
-          h: 22
-        };
       }
 
       function updatePlayer(dt) {
         const p = game.player;
+        validatePlayerCombatState();
+        p.stateTime = Math.max(CONFIG.animation.stateClampFloor, p.stateTime + dt);
+        p.animationTime += dt;
         p.hitFlash = Math.max(0, p.hitFlash - dt);
         p.hurtTimer = Math.max(0, p.hurtTimer - dt);
         p.invuln = Math.max(0, p.invuln - dt);
-        p.attackCooldown = Math.max(0, p.attackCooldown - dt);
-        p.comboPulse = Math.max(0, p.comboPulse - dt);
-        p.bob += dt * (Math.abs(p.vx) > 8 && p.onGround ? 12 : 5);
+        p.parryTimer = Math.max(0, p.parryTimer - dt);
+        p.parryCooldown = Math.max(0, p.parryCooldown - dt);
+        p.parrySuccess = Math.max(0, p.parrySuccess - dt);
+        p.counterWindow = Math.max(0, p.counterWindow - dt);
+        p.scorePulse = Math.max(0, p.scorePulse - dt);
+        p.attackCooldowns.punch = Math.max(0, p.attackCooldowns.punch - dt);
+        p.attackCooldowns.kick = Math.max(0, p.attackCooldowns.kick - dt);
+        const movingAnim = Math.abs(p.vx) > CONFIG.player.moveSpeedThreshold && p.onGround;
+        p.walkCycle += dt * (movingAnim ? CONFIG.animation.walkRateMoving : CONFIG.animation.walkRateIdle);
+        p.bobPhase += dt * (movingAnim ? CONFIG.animation.bobRateMoving : CONFIG.animation.bobRateIdle);
 
         if (!p.alive) {
           p.vy += p.gravity * dt;
@@ -382,57 +1082,61 @@
           return;
         }
 
-        const axis = inputAxis();
-        const desired = axis * p.speed;
-        const accel = p.onGround ? 980 : 650;
+        const axis = axisInput();
+        const moveFactor = p.attack
+          ? CONFIG.player.attackMoveFactor[p.attack.type] || 0.4
+          : (p.parryTimer > 0 ? CONFIG.player.parryMoveFactor : 1);
+        const desired = axis * p.speed * moveFactor;
+        const accel = p.onGround ? CONFIG.player.moveAccelGround : CONFIG.player.moveAccelAir;
         p.vx = approach(p.vx, desired, accel * dt);
 
         if (axis !== 0) p.dir = axis > 0 ? 1 : -1;
 
-        const jumpNow = jumpPressed();
-        if (jumpNow && p.onGround) {
+        const jumpNow = pressJump();
+        if (jumpNow && !p.jumpLatch && p.onGround && (!CONFIG.player.jumpLockAttack || !p.attack)) {
           p.vy = -p.jumpPower;
           p.onGround = false;
         }
+        p.jumpLatch = jumpNow;
 
-        const attackNow = attackPressed();
-        if (attackNow && !p.attackPressedLatch) triggerAttack();
-        p.attackPressedLatch = attackNow;
+        const parryNow = pressParry();
+        if (parryNow && !p.parryLatch) tryParry();
+        p.parryLatch = parryNow;
 
-        if (p.attackTimer > 0) {
-          const prev = p.attackTimer;
-          p.attackTimer = Math.max(0, p.attackTimer - dt);
-          const elapsed = p.attackDuration - p.attackTimer;
-          const prevElapsed = p.attackDuration - prev;
-          const activeNow = elapsed >= p.attackWindowStart && elapsed <= p.attackWindowEnd;
-          const wasActive = prevElapsed >= p.attackWindowStart && prevElapsed <= p.attackWindowEnd;
-          if (activeNow || (!wasActive && elapsed > p.attackWindowStart)) {
-            const hb = attackHitbox();
-            let hits = 0;
+        const punchNow = pressPunch();
+        if (punchNow && !p.attackLatch.punch) startAttack('punch');
+        p.attackLatch.punch = punchNow;
+
+        const kickNow = pressKick();
+        if (kickNow && !p.attackLatch.kick) startAttack('kick');
+        p.attackLatch.kick = kickNow;
+
+        if (p.attack) {
+          const a = p.attack;
+          a.timer -= dt;
+          const elapsed = a.duration - Math.max(a.timer, 0);
+          if (!a.hitDone && elapsed >= a.windup && elapsed <= a.activeEnd) {
+            const hb = getAttackHitbox();
+            let hitAnything = false;
             for (const enemy of game.enemies) {
-              if (enemy.dead || enemy.hurtTimer > 0) continue;
+              if (enemy.dead || enemy.hurtTimer > 0.06) continue;
               if (rectsOverlap(hb, enemy)) {
-                enemy.health -= enemy.elite ? 18 : 16;
-                enemy.hurtTimer = 0.18;
-                enemy.hitFlash = 0.16;
-                enemy.vx = p.dir * (enemy.elite ? 85 : 120);
-                hits++;
-                spawnPunchBurst(hb.x + (p.dir > 0 ? hb.w : 0), hb.y + 6, p.dir);
-                spawnHitSpark(enemy.x + enemy.w * 0.5, enemy.y + 24, palette.score);
-                game.cameraShake = Math.max(game.cameraShake, 4);
-                if (enemy.health <= 0) {
-                  enemy.dead = true;
-                  enemy.deathTimer = 0.4;
-                  game.score += enemy.worth;
-                  spawnEnemyBurst(enemy);
-                }
+                let dmg = a.damage;
+                if (p.counterWindow > 0) dmg += a.counterBonus;
+                damageEnemy(enemy, dmg, p.dir, a.color, a.type === 'kick' ? 1.2 : 1);
+                hitAnything = true;
               }
             }
-            if (hits >= 2) {
-              game.comboText = 'COMBO x' + hits;
-              game.comboTimer = 0.55;
+            if (hitAnything) {
+              a.hitDone = true;
+              burst(hb.x + (p.dir > 0 ? hb.w : 0), hb.y + hb.h * 0.5, a.color, a.burstCount, 30, 140);
+              if (p.counterWindow > 0) {
+                flash(palette.green, CONFIG.fx.flashCounter.alpha, CONFIG.fx.flashCounter.life);
+                p.counterWindow = 0;
+              }
             }
           }
+          if (a.timer < -CONFIG.animation.attackGraceTime) p.attack = null;
         }
 
         p.vy += p.gravity * dt;
@@ -443,132 +1147,321 @@
           p.y = GROUND_Y - p.h;
           p.vy = 0;
           p.onGround = true;
+        } else {
+          p.onGround = false;
         }
 
-        p.x = clamp(p.x, PLAYER_MIN_X, W - p.w - PLAYER_MAX_X_PADDING);
+        p.x = clamp(p.x, CONFIG.world.playerMinX, W - p.w - CONFIG.world.playerMaxXPadding);
+
+        if (!p.onGround) setPlayerState(p.vy < 0 ? 'jump' : 'fall');
+        else if (p.hurtTimer > 0) setPlayerState('hurt');
+        else if (p.parryTimer > 0 || p.parrySuccess > 0) setPlayerState('parry');
+        else if (p.attack) setPlayerState(p.attack.type === 'kick' ? 'kick' : 'punch');
+        else if (Math.abs(p.vx) > CONFIG.player.moveStateThreshold) setPlayerState('walk');
+        else setPlayerState('idle');
+      }
+
+      function meleeEnemyHitbox(enemy) {
+        return {
+          x: enemy.dir > 0 ? enemy.x + enemy.w - CONFIG.enemyBalance.meleeStrikeHitbox.forwardInset : enemy.x + CONFIG.enemyBalance.meleeStrikeHitbox.offsetNear,
+          y: enemy.y + CONFIG.enemyBalance.meleeStrikeHitbox.y,
+          w: enemy.type === 'heavy' ? CONFIG.enemyBalance.meleeStrikeHitbox.heavyW : CONFIG.enemyBalance.meleeStrikeHitbox.defaultW,
+          h: enemy.type === 'agile' ? CONFIG.enemyBalance.meleeStrikeHitbox.agileH : CONFIG.enemyBalance.meleeStrikeHitbox.defaultH
+        };
+      }
+
+      function spawnProjectile(enemy) {
+        const px = enemy.dir > 0 ? enemy.x + enemy.w + 2 : enemy.x - 8;
+        const py = enemy.y + 24;
+        game.projectiles.push({
+          x: px,
+          y: py,
+          w: 10,
+          h: 10,
+          vx: enemy.dir * CONFIG.enemyBalance.projectileSpeed,
+          vy: CONFIG.enemyBalance.projectileLift,
+          spin: rand(-10, 10),
+          rot: 0,
+          life: CONFIG.enemyBalance.projectileLife,
+          color: palette.green,
+          dead: false
+        });
+        burst(px, py, palette.green, 6, 20, 90, 2, 3);
+        audio.sfx('throw');
       }
 
       function updateEnemies(dt) {
         const p = game.player;
         for (let i = game.enemies.length - 1; i >= 0; i--) {
           const e = game.enemies[i];
+          e.stateTime = Math.max(0, e.stateTime + dt);
+          e.animationTime += dt;
+          e.walkCycle += dt * CONFIG.animation.enemyWalkRate;
           e.hitFlash = Math.max(0, e.hitFlash - dt);
           e.hurtTimer = Math.max(0, e.hurtTimer - dt);
+          e.stunTimer = Math.max(0, e.stunTimer - dt);
+          e.dodgeTimer = Math.max(0, e.dodgeTimer - dt);
+          e.attackCooldown = Math.max(0, e.attackCooldown - dt);
+          e.shootCooldown = Math.max(0, e.shootCooldown - dt);
 
           if (e.dead) {
-            e.deathTimer -= dt;
+            e.vx *= CONFIG.enemyBalance.hurtFriction;
             e.x += e.vx * dt;
-            e.vx *= 0.9;
+            e.deathTimer -= dt;
             if (e.deathTimer <= 0) game.enemies.splice(i, 1);
             continue;
           }
 
-          const centerDist = (p.x + p.w * 0.5) - (e.x + e.w * 0.5);
-          e.dir = centerDist >= 0 ? 1 : -1;
-          e.attackCooldown = Math.max(0, e.attackCooldown - dt);
+          const pCenter = p.x + p.w * 0.5;
+          const eCenter = e.x + e.w * 0.5;
+          const dist = pCenter - eCenter;
+          e.dir = dist >= 0 ? 1 : -1;
+          e.lastKnownPlayerX = pCenter;
 
-          const closeEnough = Math.abs(centerDist) < e.attackRange + p.w * 0.35;
-          if (!closeEnough && p.alive) {
-            e.vx = e.dir * e.speed;
-          } else {
-            e.vx = approach(e.vx, 0, 1000 * dt);
-            if (e.attackCooldown <= 0 && p.alive) {
-              e.attackTimer += dt;
-              if (e.attackTimer >= e.attackWindup) {
+          if (e.stunTimer > 0) {
+            e.state = 'hurt';
+            e.vx = approach(e.vx, 0, CONFIG.enemyBalance.stunRecoverAccel * dt);
+            e.x += e.vx * dt;
+            continue;
+          }
+
+          if (e.hurtTimer > 0) {
+            e.x += e.vx * dt;
+            continue;
+          }
+
+          if (e.dodgeTimer > 0) {
+            e.state = 'walk';
+            e.x += e.vx * dt;
+            continue;
+          }
+
+          const absDist = Math.abs(dist);
+          const desiredRange = e.projectile ? e.attackRange : e.attackRange + CONFIG.enemyBalance.meleeExtraRange;
+
+          if (e.projectile) {
+            if (absDist > desiredRange + CONFIG.enemyBalance.rangedIdealPaddingFar) {
+              e.vx = e.dir * e.baseSpeed;
+              e.state = 'walk';
+            } else if (absDist < desiredRange - CONFIG.enemyBalance.rangedIdealPaddingNear) {
+              e.vx = -e.dir * e.baseSpeed * 0.85;
+              e.state = 'walk';
+            } else {
+              e.vx = approach(e.vx, 0, CONFIG.enemyBalance.meleeApproachDecel * dt);
+              if (e.attackCooldown <= 0 && p.alive) {
+                e.attackPhase = 'windup';
+                e.attackTimer += dt;
+                e.state = 'attack';
+                if (e.attackTimer >= e.attackWindup) {
+                  e.attackTimer = 0;
+                  e.attackPhase = 'release';
+                  spawnProjectile(e);
+                  e.attackCooldown = CONFIG.enemyBalance.rangedShootCooldown;
+                  e.attackPhase = 'ready';
+                }
+              } else {
                 e.attackTimer = 0;
-                e.attackCooldown = e.elite ? 0.85 : 1.0;
-                const hitbox = {
-                  x: e.dir > 0 ? e.x + e.w - 6 : e.x - 18,
-                  y: e.y + 18,
-                  w: 24,
-                  h: 22
-                };
-                if (rectsOverlap(hitbox, p)) applyPlayerHit(e.elite ? 14 : 9, e.x);
+                e.attackPhase = 'ready';
+                e.state = 'idle';
+              }
+            }
+          } else if (absDist > desiredRange && p.alive) {
+            e.vx = e.dir * e.baseSpeed;
+            e.state = 'walk';
+            e.attackTimer = 0;
+            e.attackPhase = 'ready';
+          } else {
+            e.vx = approach(e.vx, 0, CONFIG.enemyBalance.meleeApproachDecel * dt);
+            if (e.attackCooldown <= 0 && p.alive) {
+              if (e.type === 'agile' && e.dodgeChance > 0 && chance(e.dodgeChance * dt * 60) && absDist < CONFIG.enemyBalance.agileDodgeDistance) {
+                e.dodgeTimer = CONFIG.enemyBalance.agileDodgeDuration;
+                e.vx = -e.dir * CONFIG.enemyBalance.agileDodgeSpeed;
+                burst(e.x + e.w * 0.5, e.y + e.h * 0.6, palette.agile, 5, 20, 70, 2, 3);
+              } else {
+                e.attackPhase = 'windup';
+                e.attackTimer += dt;
+                e.state = 'attack';
+                if (e.attackTimer >= e.attackWindup) {
+                  e.attackPhase = 'strike';
+                  const hb = meleeEnemyHitbox(e);
+                  if (rectsOverlap(hb, p)) applyPlayerHit(e.damage, e.x, 'melee');
+                  e.attackTimer = 0;
+                  e.attackCooldown = enemyTemplate(e.type).cooldown;
+                  e.attackPhase = 'ready';
+                }
               }
             } else {
               e.attackTimer = 0;
+              e.attackPhase = 'ready';
+              e.state = 'idle';
             }
           }
 
           e.x += e.vx * dt;
-
-          if (e.x < -80) game.enemies.splice(i, 1);
+          if (e.x < CONFIG.world.enemyCullX) game.enemies.splice(i, 1);
         }
       }
 
-      function updateSpawner(dt) {
-        if (game.gameOver) return;
-        game.spawnInterval = Math.max(SPAWN_INTERVAL_MIN, SPAWN_INTERVAL_START - game.time * SPAWN_INTERVAL_RAMP);
-        game.spawnTimer -= dt;
-        if (game.spawnTimer <= 0) {
-          const cap = game.score > 100 ? 6 : 5;
-          if (game.enemies.filter(e => !e.dead).length < cap) {
-            game.enemies.push(createEnemy(game.score));
+      function updateProjectiles(dt) {
+        const p = game.player;
+        for (let i = game.projectiles.length - 1; i >= 0; i--) {
+          const pr = game.projectiles[i];
+          pr.life -= dt;
+          pr.x += pr.vx * dt;
+          pr.y += pr.vy * dt;
+          pr.rot += pr.spin * dt;
+          pr.vy += CONFIG.enemyBalance.projectileGravity * dt;
+
+          if (p.parryTimer > 0) {
+            const parryBox = { x: p.x - 6, y: p.y + 12, w: p.w + 12, h: p.h - 18 };
+            if (rectsOverlap(pr, parryBox)) {
+              pr.vx *= CONFIG.enemyBalance.projectileParrySpeedScale;
+              pr.vy = CONFIG.enemyBalance.projectileParryLift;
+              pr.color = palette.gold;
+              p.parrySuccess = CONFIG.player.parrySuccessTime;
+              p.counterWindow = CONFIG.enemyBalance.projectileParryCounterWindow;
+              p.invuln = CONFIG.player.parryInvuln;
+              flash(palette.white, CONFIG.fx.flashProjectileParry.alpha, CONFIG.fx.flashProjectileParry.life);
+              burst(pr.x + 4, pr.y + 4, palette.green, 14, 50, 170);
+              audio.sfx('parry');
+              haptic(CONFIG.haptics.parryMs);
+            }
           }
-          game.spawnTimer = game.spawnInterval * rand(0.85, 1.15);
+
+          if (rectsOverlap(pr, p) && pr.vx * p.dir <= 0) {
+            applyPlayerHit(CONFIG.enemyBalance.projectileDamage, pr.x, 'projectile');
+            burst(pr.x + 4, pr.y + 4, pr.color, 8, 30, 110);
+            game.projectiles.splice(i, 1);
+            continue;
+          }
+
+          for (const enemy of game.enemies) {
+            if (enemy.dead) continue;
+            if (pr.color === palette.gold && rectsOverlap(pr, enemy)) {
+              damageEnemy(enemy, CONFIG.enemyBalance.projectileParryDamage, sign(pr.vx), palette.gold, CONFIG.enemyBalance.projectileParryKnockBoost);
+              burst(pr.x + 4, pr.y + 4, palette.gold, 8, 30, 110);
+              game.projectiles.splice(i, 1);
+              break;
+            }
+          }
+          if (!game.projectiles[i]) continue;
+
+          if (pr.life <= 0 || pr.x < -CONFIG.world.projectileCullMargin || pr.x > W + CONFIG.world.projectileCullMargin || pr.y > H + 20) {
+            game.projectiles.splice(i, 1);
+          }
         }
       }
 
       function updateParticles(dt) {
-        for (let i = game.particles.length - 1; i >= 0; i--) {
-          const p = game.particles[i];
+        const active = game.particlePool.active;
+        for (let i = active.length - 1; i >= 0; i--) {
+          const p = active[i];
           p.life -= dt;
           p.x += p.vx * dt;
           p.y += p.vy * dt;
-          p.vy += 220 * dt;
-          p.vx *= 0.985;
-          if (p.life <= 0) game.particles.splice(i, 1);
+          p.vy += p.gravity * dt;
+          p.vx *= CONFIG.fx.particleFriction;
+          const lifeRatio = p.maxLife > 0 ? clamp(p.life / p.maxLife, 0, 1) : 0;
+          p.alphaBucket = Math.max(0.25, Math.ceil(lifeRatio * 4) / 4);
+          if (p.life <= 0) recycleParticle(i);
+        }
+        for (let i = game.flashes.length - 1; i >= 0; i--) {
+          const f = game.flashes[i];
+          f.life -= dt;
+          if (f.life <= 0) game.flashes.splice(i, 1);
+        }
+      }
+
+      function getSpawnCap(score) {
+        for (const row of CONFIG.spawn.maxAliveByScore) {
+          if (score > row.score) return row.cap;
+        }
+        return 5;
+      }
+
+      function updateSpawner(dt) {
+        if (game.gameOver) return;
+        game.spawnInterval = Math.max(CONFIG.spawn.minInterval, CONFIG.spawn.intervalBase - game.time * CONFIG.spawn.difficultyRamp);
+        game.spawnTimer -= dt;
+        if (game.spawnTimer <= 0) {
+          let aliveCount = 0;
+          for (const enemy of game.enemies) if (!enemy.dead) aliveCount++;
+          const cap = getSpawnCap(game.score);
+          if (aliveCount < cap) game.enemies.push(spawnEnemy(game.score));
+          game.spawnTimer = game.spawnInterval * rand(CONFIG.spawn.jitterMin, CONFIG.spawn.jitterMax);
         }
       }
 
       function update(dt) {
         game.time += dt;
-        game.cameraShake = Math.max(0, game.cameraShake - dt * 18);
+        game.cameraShake = Math.max(0, game.cameraShake - dt * CONFIG.fx.cameraShakeDecay);
         game.comboTimer = Math.max(0, game.comboTimer - dt);
+        if (game.comboDecay > 0) {
+          game.comboDecay -= dt;
+          if (game.comboDecay <= 0) game.comboCount = 0;
+        }
         if (game.gameOver) game.restartTimer = Math.max(0, game.restartTimer - dt);
 
         updatePlayer(dt);
         updateSpawner(dt);
         updateEnemies(dt);
+        updateProjectiles(dt);
         updateParticles(dt);
       }
 
       function drawBackground(t) {
-        const grad = ctx.createLinearGradient(0, 0, 0, H);
-        grad.addColorStop(0, palette.skyTop);
-        grad.addColorStop(1, palette.skyBottom);
-        ctx.fillStyle = grad;
+        const sky = ctx.createLinearGradient(0, 0, 0, H);
+        sky.addColorStop(0, palette.skyTop);
+        sky.addColorStop(1, palette.skyBottom);
+        ctx.fillStyle = sky;
         ctx.fillRect(0, 0, W, H);
 
-        for (let i = 0; i < 7; i++) {
-          const x = (i * 58 + 10) % W;
-          const h = 120 + (i % 3) * 40;
-          ctx.fillStyle = i % 2 ? palette.cityA : palette.cityB;
-          ctx.fillRect(x, 180 - h * 0.2, 42 + (i % 2) * 10, h);
-          ctx.fillStyle = i % 2 ? 'rgba(70,210,255,0.2)' : 'rgba(255,77,136,0.17)';
-          ctx.fillRect(x + 8, 210 - h * 0.15, 10, 3);
-          ctx.fillRect(x + 22, 235 - h * 0.18, 12, 3);
+        ctx.fillStyle = 'rgba(233,243,255,0.95)';
+        ctx.beginPath();
+        ctx.arc(286, 84, 22, 0, Math.PI * 2);
+        ctx.fill();
+
+        for (let i = 0; i < 22; i++) {
+          ctx.fillStyle = i % 3 === 0 ? palette.cityA : i % 3 === 1 ? palette.cityB : palette.cityC;
+          const bw = 14 + (i % 4) * 8;
+          const bh = 90 + (i % 5) * 26 + (i % 2) * 16;
+          const x = i * 18 - ((t * 10) % 18);
+          ctx.fillRect(x, 220 - bh * 0.35, bw, bh);
+          ctx.fillStyle = i % 2 ? 'rgba(255,215,90,0.12)' : 'rgba(99,216,255,0.15)';
+          ctx.fillRect(x + 3, 220 - bh * 0.18, bw - 6, 3);
+          ctx.fillRect(x + 5, 220 - bh * 0.1 + 10, bw - 10, 2);
         }
 
-        ctx.fillStyle = '#090b13';
-        ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+        for (let i = 0; i < 5; i++) {
+          const lx = 42 + i * 64 - ((t * 16) % 6);
+          const sway = Math.sin(t * CONFIG.animation.backgroundLanternSway + i) * 3;
+          ctx.strokeStyle = 'rgba(255,233,164,0.32)';
+          ctx.beginPath();
+          ctx.moveTo(lx, 70);
+          ctx.lineTo(lx + sway, 112);
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(255,215,90,0.85)';
+          ctx.fillRect(lx - 6 + sway, 112, 12, 16);
+          ctx.fillStyle = 'rgba(255,255,255,0.25)';
+          ctx.fillRect(lx - 3 + sway, 115, 6, 6);
+        }
 
+        ctx.fillStyle = '#0a0d17';
+        ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
         for (let y = GROUND_Y; y < H; y += 18) {
-          ctx.fillStyle = y % 36 === 0 ? palette.floorLine : palette.floor;
+          ctx.fillStyle = y % 36 === 0 ? palette.groundB : palette.groundA;
           ctx.fillRect(0, y, W, 18);
         }
-
-        ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+        ctx.strokeStyle = palette.floorLine;
         ctx.lineWidth = 1;
-        for (let x = -40; x < W + 60; x += 28) {
-          const shift = ((t * 80) % 28);
+        for (let x = -50; x < W + 70; x += 28) {
+          const shift = (t * 90) % 28;
           ctx.beginPath();
           ctx.moveTo(x - shift, GROUND_Y);
-          ctx.lineTo(x + 40 - shift, H);
+          ctx.lineTo(x + 36 - shift, H);
           ctx.stroke();
         }
-
-        ctx.fillStyle = 'rgba(70,210,255,0.16)';
+        ctx.fillStyle = 'rgba(99,216,255,0.2)';
         ctx.fillRect(0, GROUND_Y - 4, W, 4);
       }
 
@@ -580,259 +1473,395 @@
       }
 
       function drawFighter(entity, isPlayer) {
-        const flash = entity.hitFlash > 0;
-        const dir = entity.dir;
         const x = Math.round(entity.x);
         const y = Math.round(entity.y);
-        const body = isPlayer ? palette.hero : palette.enemy;
-        const dark = isPlayer ? palette.heroDark : palette.enemyDark;
-        const bob = isPlayer ? Math.sin(game.player.bob) * 1.5 : Math.sin((game.time + x) * 8) * 0.8;
-        const attacking = isPlayer && entity.attackTimer > 0;
-        const attackSwing = attacking ? Math.sin((1 - entity.attackTimer / entity.attackDuration) * Math.PI) : 0;
-        const lean = clamp(entity.vx / 180, -1, 1) * 3;
+        const dir = entity.dir || 1;
+        const body = isPlayer ? palette.player : entity.color;
+        const dark = isPlayer ? palette.playerDark : entity.dark;
+        const trim = isPlayer ? palette.playerTrim : palette.white;
+        const moving = Math.abs(entity.vx) > CONFIG.player.moveSpeedThreshold && !entity.dead;
+        const walkPhase = isPlayer ? game.player.walkCycle : entity.walkCycle;
+        const walk = Math.sin(walkPhase * 1.2);
+        const idle = Math.sin((entity.animationTime + x * 0.02) * CONFIG.animation.bodyIdleBobRate) * 1.2;
+        const bob = moving ? walk * 1.3 : idle;
+        const punching = entity.state === 'punch' || (!isPlayer && entity.state === 'attack' && !entity.projectile);
+        const kicking = entity.state === 'kick';
+        const parrying = isPlayer && (entity.state === 'parry');
+        const hurting = entity.state === 'hurt';
+        const dying = entity.state === 'dead';
+        const frontArmExt = punching ? 10 : 0;
+        const frontLegExt = kicking ? 14 : 0;
+        const torsoLean = punching ? 3 : kicking ? 5 : parrying ? -2 : moving ? clamp(entity.vx / 70, -3, 3) : 0;
+        const flashActive = entity.hitFlash > 0 || (isPlayer && entity.parrySuccess > 0);
 
-        drawShadow(x + entity.w / 2, GROUND_Y + 3, entity.w * (isPlayer ? 0.54 : 0.5));
+        drawShadow(x + entity.w * 0.5, GROUND_Y + 3, entity.w * (isPlayer ? 0.56 : 0.52), dying ? 0.12 : 0.22);
 
         ctx.save();
-        ctx.translate(x + entity.w / 2, y + entity.h / 2 + bob);
-        ctx.scale(dir, 1);
-        ctx.translate(-(x + entity.w / 2), -(y + entity.h / 2));
+        ctx.translate(x + entity.w * 0.5, y + entity.h * 0.5 + bob);
+        ctx.scale(dir, dying ? 0.92 : 1);
+        if (dying) ctx.rotate(-0.75);
+        ctx.translate(-(x + entity.w * 0.5), -(y + entity.h * 0.5));
 
-        if (flash) {
-          ctx.fillStyle = palette.hit;
-          ctx.globalAlpha = 0.6;
+        if (flashActive) {
+          ctx.globalAlpha = isPlayer && entity.parrySuccess > 0 ? 0.45 : 0.34;
+          ctx.fillStyle = entity.parrySuccess > 0 ? palette.green : palette.white;
           ctx.fillRect(x - 4, y - 4, entity.w + 8, entity.h + 8);
           ctx.globalAlpha = 1;
         }
 
-        ctx.fillStyle = dark;
-        ctx.fillRect(x + 11 + lean * 0.4, y + 14, 16, 28);
+        if (hurting) ctx.translate(-dir * 2, 0);
 
+        const hipY = y + 44;
+        const shoulderY = y + 20;
+
+        ctx.fillStyle = dark;
+        ctx.fillRect(x + 11 + torsoLean * 0.5, y + 14, 16, 30);
         ctx.fillStyle = body;
-        ctx.fillRect(x + 9 + lean * 0.6, y + 10, 18, 32);
+        ctx.fillRect(x + 9 + torsoLean * 0.7, y + 10, 18, 34);
 
         ctx.fillStyle = dark;
-        ctx.fillRect(x + 12, y + 43, 6, 22);
-        ctx.fillRect(x + 20, y + 43, 6, 22);
-
+        ctx.fillRect(x + 8, shoulderY, 6, 17);
+        ctx.fillRect(x + 24, shoulderY + 2, 7 + frontArmExt, 8);
         ctx.fillStyle = body;
-        ctx.fillRect(x + 11, y + 42, 7, 21);
-        ctx.fillRect(x + 20, y + 42, 7, 21);
+        ctx.fillRect(x + 8, shoulderY, 5, 16);
+        ctx.fillRect(x + 24, shoulderY + 2, 6 + frontArmExt, 7);
 
-        const frontArmY = y + 20;
-        const backArmY = y + 18;
+        if (parrying) {
+          ctx.fillStyle = palette.green;
+          ctx.fillRect(x + 26, shoulderY - 2, 8, 10);
+        }
+
+        const backLegShift = moving ? walk * 3 : 0;
+        const frontLegShift = moving ? -walk * 3 : 0;
         ctx.fillStyle = dark;
-        ctx.fillRect(x + 6, backArmY, 7, 18);
-        ctx.fillRect(x + 24, frontArmY, attacking ? 11 + attackSwing * 12 : 8, 8);
-
+        ctx.fillRect(x + 12, hipY + backLegShift, 6, 22);
+        ctx.fillRect(x + 20 + frontLegExt * 0.5, hipY + frontLegShift, 6 + frontLegExt, 22);
         ctx.fillStyle = body;
-        ctx.fillRect(x + 6, backArmY, 6, 16);
-        ctx.fillRect(x + 24, frontArmY, attacking ? 10 + attackSwing * 12 : 7, 7);
+        ctx.fillRect(x + 11, hipY + backLegShift, 6, 21);
+        ctx.fillRect(x + 20 + frontLegExt * 0.5, hipY + frontLegShift, 5 + frontLegExt, 20);
 
         ctx.fillStyle = dark;
-        ctx.fillRect(x + 9, y + 2, 20, 16);
-        ctx.fillStyle = flash ? palette.white : (isPlayer ? '#ffe7a0' : '#ffc4c4');
-        ctx.fillRect(x + 10, y + 3, 18, 14);
-
+        ctx.fillRect(x + 9, y + 2, 20, 17);
+        ctx.fillStyle = hurting ? '#ffd4d9' : trim;
+        ctx.fillRect(x + 10, y + 3, 18, 15);
         ctx.fillStyle = palette.black;
-        ctx.fillRect(x + 19, y + 8, 5, 3);
-        ctx.fillRect(x + 25, y + 8, 2, 3);
-        ctx.fillRect(x + 20, y + 13, 5, 2);
+        ctx.fillRect(x + 18, y + 8, 5, 3);
+        ctx.fillRect(x + 24, y + 8, 2, 3);
+        ctx.fillRect(x + 19, y + 13, kicking ? 6 : 5, 2);
 
-        if (!isPlayer && entity.elite) {
-          ctx.fillStyle = palette.neonA;
+        if (!isPlayer) {
+          ctx.fillStyle = entity.type === 'agile' ? palette.cyan : entity.type === 'heavy' ? palette.purple : entity.type === 'ranged' ? palette.green : palette.gold;
           ctx.fillRect(x + 9, y + 0, 20, 2);
+          if (entity.projectile) {
+            ctx.fillStyle = palette.green;
+            ctx.fillRect(x + 2, y + 24, 5, 5);
+          }
         }
 
         ctx.restore();
       }
 
+      function drawProjectiles() {
+        for (const pr of game.projectiles) {
+          ctx.save();
+          ctx.translate(pr.x + pr.w * 0.5, pr.y + pr.h * 0.5);
+          ctx.rotate(pr.rot);
+          ctx.fillStyle = pr.color;
+          ctx.fillRect(-5, -5, 10, 10);
+          ctx.fillStyle = 'rgba(255,255,255,0.65)';
+          ctx.fillRect(-2, -2, 4, 4);
+          ctx.restore();
+        }
+      }
+
       function drawParticles() {
-        for (const p of game.particles) {
-          ctx.globalAlpha = clamp(p.life / p.maxLife, 0, 1);
-          ctx.fillStyle = p.color;
-          ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
+        const active = game.particlePool.active;
+        if (!active.length) return;
+        const batches = new Map();
+        for (const p of active) {
+          const alpha = p.alphaBucket;
+          const key = `${p.color}|${alpha}`;
+          let batch = batches.get(key);
+          if (!batch) {
+            batch = { color: p.color, alpha, items: [] };
+            batches.set(key, batch);
+          }
+          batch.items.push(p);
+        }
+        for (const batch of batches.values()) {
+          ctx.globalAlpha = batch.alpha;
+          ctx.fillStyle = batch.color;
+          for (const p of batch.items) {
+            ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
+          }
         }
         ctx.globalAlpha = 1;
       }
 
       function drawUI() {
-        ctx.fillStyle = 'rgba(5,7,10,0.6)';
-        ctx.fillRect(14, 14, 240, 32);
+        ctx.fillStyle = 'rgba(6,8,14,0.65)';
+        ctx.fillRect(12, 12, 206, 38);
         ctx.strokeStyle = 'rgba(255,255,255,0.12)';
-        ctx.strokeRect(14.5, 14.5, 239, 31);
+        ctx.strokeRect(12.5, 12.5, 205, 37);
 
         const hp = game.player.health / game.player.maxHealth;
-        ctx.fillStyle = palette.hpBack;
-        ctx.fillRect(20, 20, 150, 20);
-        ctx.fillStyle = hp > 0.35 ? palette.hp : '#ffb347';
-        ctx.fillRect(20, 20, Math.max(0, 150 * hp), 20);
+        ctx.fillStyle = 'rgba(255,255,255,0.14)';
+        ctx.fillRect(20, 21, 132, 18);
+        const hpGrad = ctx.createLinearGradient(20, 0, 152, 0);
+        hpGrad.addColorStop(0, '#ff5d73');
+        hpGrad.addColorStop(1, hp < 0.35 ? '#ffb457' : '#ffd75a');
+        ctx.fillStyle = hpGrad;
+        ctx.fillRect(20, 21, Math.max(0, 132 * hp), 18);
         ctx.strokeStyle = 'rgba(255,255,255,0.16)';
-        ctx.strokeRect(20.5, 20.5, 149, 19);
+        ctx.strokeRect(20.5, 21.5, 131, 17);
 
         ctx.fillStyle = palette.white;
-        ctx.font = 'bold 12px Arial';
-        ctx.fillText(`HP ${game.player.health}/${game.player.maxHealth}`, 176, 34);
+        ctx.font = 'bold 11px Arial';
+        ctx.fillText(`HP ${game.player.health}/${game.player.maxHealth}`, 160, 34);
 
         ctx.textAlign = 'right';
+        ctx.fillStyle = game.player.scorePulse > 0 ? palette.gold : palette.white;
         ctx.font = 'bold 18px Arial';
-        ctx.fillStyle = palette.score;
-        ctx.fillText(String(game.score).padStart(4, '0'), W - 18, 36);
+        ctx.fillText(String(game.score).padStart(4, '0'), W - 16, 28);
+        ctx.font = 'bold 11px Arial';
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.fillText('街头积分', W - 16, 42);
         ctx.textAlign = 'left';
 
-        if (game.comboTimer > 0) {
-          ctx.globalAlpha = clamp(game.comboTimer / 0.55, 0, 1);
-          ctx.fillStyle = palette.score;
+        if (game.player.counterWindow > 0) {
+          ctx.fillStyle = 'rgba(125,255,176,0.16)';
+          ctx.fillRect(12, 56, CONFIG.ui.counterMeterW, 18);
+          ctx.strokeStyle = 'rgba(125,255,176,0.32)';
+          ctx.strokeRect(12.5, 56.5, CONFIG.ui.counterMeterW - 1, 17);
+          ctx.fillStyle = palette.green;
+          ctx.font = 'bold 11px Arial';
+          ctx.fillText('COUNTER OPEN', 20, 69);
+        } else if (game.player.parryCooldown > 0) {
+          ctx.fillStyle = 'rgba(255,255,255,0.08)';
+          ctx.fillRect(12, 56, CONFIG.ui.parryMeterW, 16);
+          ctx.fillStyle = 'rgba(125,255,176,0.8)';
+          ctx.fillRect(12, 56, CONFIG.ui.parryMeterW * (1 - game.player.parryCooldown / CONFIG.player.parryCooldown), 16);
+        }
+
+        if (game.comboTimer > 0 && game.comboText) {
+          ctx.globalAlpha = clamp(game.comboTimer / CONFIG.ui.comboFade, 0, 1);
+          ctx.fillStyle = palette.gold;
           ctx.font = 'bold 16px Arial';
-          ctx.fillText(game.comboText, 20, 64);
+          ctx.fillText(game.comboText, 20, CONFIG.ui.hudY.combo);
           ctx.globalAlpha = 1;
         }
+
+        ctx.fillStyle = 'rgba(255,255,255,0.68)';
+        ctx.font = '10px Arial';
+        ctx.fillText('Punch J', 16, H - 126);
+        ctx.fillText('Kick K', 16, H - 112);
+        ctx.fillText('Parry P', 16, H - 98);
       }
 
       function drawControls() {
-        const alpha = 0.92;
-
         for (const control of controlList) {
           const active = touchState[control.key] ||
-            (control.key === 'left' && (keys.ArrowLeft || keys.KeyA)) ||
-            (control.key === 'right' && (keys.ArrowRight || keys.KeyD)) ||
-            (control.key === 'jump' && (keys.ArrowUp || keys.KeyW || keys.Space)) ||
-            (control.key === 'attack' && (keys.KeyJ || keys.KeyK || keys.KeyX));
+            (control.key === 'left' && pressLeft()) ||
+            (control.key === 'right' && pressRight()) ||
+            (control.key === 'jump' && pressJump()) ||
+            (control.key === 'punch' && pressPunch()) ||
+            (control.key === 'kick' && pressKick()) ||
+            (control.key === 'parry' && pressParry()) ||
+            (control.key === 'mute' && !game.muted && game.musicStarted);
 
-          ctx.globalAlpha = alpha;
-          ctx.fillStyle = active ? 'rgba(255, 213, 74, 0.42)' : 'rgba(255,255,255,0.12)';
+          ctx.globalAlpha = control.key === 'mute' ? 0.95 : 0.9;
+          ctx.fillStyle = active ? 'rgba(255,255,255,0.22)' : control.color;
           ctx.beginPath();
           ctx.arc(control.x, control.y, control.r, 0, Math.PI * 2);
           ctx.fill();
-          ctx.strokeStyle = active ? 'rgba(255, 213, 74, 0.9)' : 'rgba(255,255,255,0.18)';
-          ctx.lineWidth = 2;
+          ctx.strokeStyle = active ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.18)';
+          ctx.lineWidth = control.key === 'kick' ? 2.4 : 2;
           ctx.stroke();
-          ctx.fillStyle = active ? palette.white : 'rgba(255,255,255,0.82)';
-          ctx.font = control.key === 'attack' ? 'bold 18px Arial' : 'bold 16px Arial';
+          ctx.fillStyle = control.key === 'kick' ? palette.red : control.key === 'parry' ? palette.green : control.key === 'jump' ? palette.cyan : palette.white;
+          if (control.key === 'mute' && game.muted) ctx.fillStyle = 'rgba(255,255,255,0.46)';
+          ctx.font = control.key === 'mute' ? 'bold 14px Arial' : 'bold 15px Arial';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillText(control.label, control.x, control.y + 1);
+          ctx.fillText(control.key === 'mute' && game.muted ? '×' : control.label, control.x, control.y + 1);
         }
-
+        ctx.globalAlpha = 1;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'alphabetic';
-        ctx.globalAlpha = 1;
+      }
+
+      function reportRuntimeError(label, err) {
+        const message = err instanceof Error ? err.message : String(err || 'Unknown error');
+        console.error(label, err);
+        game.runtimeError = `${label}: ${message}`;
+      }
+
+      function safeRender() {
+        try {
+          render();
+        } catch (err) {
+          reportRuntimeError('Render failure', err);
+        }
+      }
+
+      function safeUpdate(dt) {
+        try {
+          update(dt);
+        } catch (err) {
+          reportRuntimeError('Game loop failure', err);
+          game.accumulatorMs = 0;
+        }
       }
 
       function drawOverlay() {
+        for (const f of game.flashes) {
+          ctx.globalAlpha = f.alpha * (f.life / f.maxLife);
+          ctx.fillStyle = f.color;
+          ctx.fillRect(0, 0, W, H);
+        }
+        ctx.globalAlpha = 1;
+
+        if (game.runtimeError) {
+          ctx.fillStyle = 'rgba(5,7,12,0.82)';
+          ctx.fillRect(0, 0, W, H);
+          ctx.textAlign = 'center';
+          ctx.fillStyle = '#ff8f9f';
+          ctx.font = 'bold 22px Arial';
+          ctx.fillText('SYSTEM STUNNED', W / 2, 236);
+          ctx.fillStyle = 'rgba(255,255,255,0.92)';
+          ctx.font = '13px Arial';
+          ctx.fillText('A runtime error occurred. Reload to recover.', W / 2, 270);
+          ctx.fillStyle = 'rgba(255,255,255,0.72)';
+          ctx.font = '11px Arial';
+          ctx.fillText(game.runtimeError.slice(0, 64), W / 2, 296);
+          ctx.textAlign = 'left';
+          return;
+        }
+
         if (!game.gameOver) return;
-        ctx.fillStyle = 'rgba(4,6,10,0.56)';
+        ctx.fillStyle = 'rgba(5,7,12,0.58)';
         ctx.fillRect(0, 0, W, H);
-        ctx.fillStyle = palette.white;
         ctx.textAlign = 'center';
+        ctx.fillStyle = palette.white;
         ctx.font = 'bold 28px Arial';
-        ctx.fillText('YOU FELL', W / 2, 255);
+        ctx.fillText('DRAGON DOWN', W / 2, 248);
+        ctx.fillStyle = palette.gold;
         ctx.font = 'bold 16px Arial';
-        ctx.fillStyle = palette.score;
-        ctx.fillText('Score ' + game.score, W / 2, 288);
+        ctx.fillText(`Score ${game.score}`, W / 2, 282);
         ctx.fillStyle = 'rgba(255,255,255,0.88)';
         ctx.font = '14px Arial';
         const ready = game.restartTimer <= 0;
-        ctx.fillText(ready ? 'Tap attack or press Enter to restart' : '...', W / 2, 320);
+        ctx.fillText(ready ? 'Tap any attack or press Enter to restart' : '...', W / 2, 316);
+        ctx.fillStyle = 'rgba(255,255,255,0.66)';
+        ctx.font = '12px Arial';
+        ctx.fillText('Parry just before impact to stun and counter.', W / 2, 342);
         ctx.textAlign = 'left';
       }
 
       function render() {
         ctx.save();
-        if (game.cameraShake > 0) {
-          ctx.translate(rand(-game.cameraShake, game.cameraShake), rand(-game.cameraShake, game.cameraShake));
+        try {
+          if (game.cameraShake > 0) ctx.translate(rand(-game.cameraShake, game.cameraShake), rand(-game.cameraShake, game.cameraShake));
+
+          drawBackground(game.time);
+
+          const ordered = [game.player, ...game.enemies].sort((a, b) => (a.y + a.h) - (b.y + b.h));
+          for (const entity of ordered) drawFighter(entity, entity === game.player);
+
+          const hb = getAttackHitbox();
+          if (hb && game.player.attack) {
+            ctx.fillStyle = game.player.attack.type === 'kick' ? CONFIG.fx.flashHitboxKick : CONFIG.fx.flashHitboxPunch;
+            ctx.fillRect(hb.x, hb.y, hb.w, hb.h);
+          }
+
+          if (game.player.parryTimer > 0) {
+            ctx.strokeStyle = 'rgba(125,255,176,0.85)';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(game.player.x - 4, game.player.y + 10, game.player.w + 8, game.player.h - 16);
+          }
+
+          drawProjectiles();
+          drawParticles();
+          drawUI();
+          drawControls();
+          drawOverlay();
+        } finally {
+          ctx.restore();
         }
-
-        drawBackground(game.time);
-
-        const entities = [game.player, ...game.enemies.filter(e => !e.dead), ...game.enemies.filter(e => e.dead)];
-        entities.sort((a, b) => (a.y + a.h) - (b.y + b.h));
-        for (const entity of entities) {
-          drawFighter(entity, entity === game.player);
-        }
-
-        if (game.player.attackTimer > 0 && game.player.alive) {
-          const hb = attackHitbox();
-          ctx.fillStyle = 'rgba(255,227,122,0.12)';
-          ctx.fillRect(hb.x, hb.y, hb.w, hb.h);
-        }
-
-        drawParticles();
-        drawUI();
-        drawControls();
-        drawOverlay();
-        ctx.restore();
       }
 
       function loop(ts) {
         if (!game.lastTs) {
           game.lastTs = ts;
-          render();
+          safeRender();
           requestAnimationFrame(loop);
           return;
         }
-
         const frameDeltaMs = Math.min(ts - game.lastTs, MAX_FRAME_DELTA_MS);
         game.lastTs = ts;
         game.accumulatorMs += frameDeltaMs;
 
         let steps = 0;
-        while (game.accumulatorMs >= FRAME_TIME_MS && steps < MAX_UPDATE_STEPS) {
-          update(FIXED_DT);
-          game.accumulatorMs -= FRAME_TIME_MS;
+        while (game.accumulatorMs >= FRAME_MS && steps < MAX_UPDATE_STEPS && !game.runtimeError) {
+          safeUpdate(FIXED_DT);
+          game.accumulatorMs -= FRAME_MS;
           steps++;
         }
+        if (steps === MAX_UPDATE_STEPS) game.accumulatorMs = 0;
 
-        if (steps === MAX_UPDATE_STEPS) {
-          game.accumulatorMs = 0;
-        }
-
-        render();
+        safeRender();
         requestAnimationFrame(loop);
       }
 
-      window.addEventListener('keydown', (e) => {
-        if ([ 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space' ].includes(e.code) || ['Space'].includes(e.key)) e.preventDefault();
-        keys[e.code] = true;
-        if (e.code === 'Enter' && game.gameOver && game.restartTimer <= 0) resetGame();
-      }, { passive: false });
-
-      window.addEventListener('keyup', (e) => {
-        keys[e.code] = false;
-      });
-
-      function controlAt(px, py) {
+      function controlAt(clientX, clientY) {
         const rect = canvas.getBoundingClientRect();
-        const x = (px - rect.left) * (W / rect.width);
-        const y = (py - rect.top) * (H / rect.height);
-
+        const x = (clientX - rect.left) * (W / rect.width);
+        const y = (clientY - rect.top) * (H / rect.height);
         for (const control of controlList) {
           const dx = x - control.x;
           const dy = y - control.y;
           if (dx * dx + dy * dy <= control.hitR * control.hitR) return control.key;
         }
-
         if (game.gameOver && game.restartTimer <= 0) return 'restart';
         return null;
       }
 
-      function clearPointer(id) {
+      function releasePointer(id) {
         const existing = pointers.get(id);
         if (existing && touchState[existing]) touchState[existing] = false;
         pointers.delete(id);
       }
 
+      async function primeAudio() {
+        badge.style.display = 'none';
+        try {
+          await audio.start();
+        } catch (err) {
+          reportRuntimeError('Audio start failed', err);
+        }
+      }
+
+      function toggleMute() {
+        game.muted = !game.muted;
+        audio.setMuted(game.muted);
+      }
+
       function onPointerDown(e) {
         e.preventDefault();
         canvas.setPointerCapture?.(e.pointerId);
-        const control = controlAt(e.clientX, e.clientY);
-        if (control === 'restart') {
+        primeAudio();
+        const key = controlAt(e.clientX, e.clientY);
+        if (key === 'restart') {
           resetGame();
           return;
         }
-        if (!control) return;
-        pointers.set(e.pointerId, control);
-        touchState[control] = true;
+        if (key === 'mute') {
+          toggleMute();
+          return;
+        }
+        if (!key) return;
+        pointers.set(e.pointerId, key);
+        touchState[key] = true;
+        if (key === 'punch' || key === 'kick' || key === 'parry') haptic(key === 'kick' ? CONFIG.haptics.kickMs : CONFIG.haptics.attackMs);
       }
 
       function onPointerMove(e) {
@@ -840,8 +1869,8 @@
         e.preventDefault();
         const next = controlAt(e.clientX, e.clientY);
         const prev = pointers.get(e.pointerId);
-        if (prev && prev !== 'restart') touchState[prev] = false;
-        if (next && next !== 'restart') {
+        if (prev && touchState[prev]) touchState[prev] = false;
+        if (next && next !== 'restart' && next !== 'mute') {
           pointers.set(e.pointerId, next);
           touchState[next] = true;
         } else {
@@ -851,8 +1880,29 @@
 
       function onPointerUp(e) {
         e.preventDefault();
-        clearPointer(e.pointerId);
+        releasePointer(e.pointerId);
       }
+
+      window.addEventListener('keydown', async (e) => {
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code) || e.key === ' ') e.preventDefault();
+        keys[e.code] = true;
+        await primeAudio();
+        if (e.code === 'KeyM') toggleMute();
+        if (e.code === 'Enter' && game.gameOver && game.restartTimer <= 0) resetGame();
+      }, { passive: false });
+
+      window.addEventListener('keyup', (e) => {
+        keys[e.code] = false;
+      });
+
+      function refreshViewportLayout() {
+        updateSafeArea();
+        layoutControls();
+      }
+
+      window.addEventListener('resize', refreshViewportLayout);
+      window.addEventListener('orientationchange', refreshViewportLayout);
+      window.screen?.orientation?.addEventListener?.('change', refreshViewportLayout);
 
       canvas.addEventListener('pointerdown', onPointerDown, { passive: false });
       canvas.addEventListener('pointermove', onPointerMove, { passive: false });
