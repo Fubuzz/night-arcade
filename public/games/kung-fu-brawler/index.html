@@ -80,6 +80,54 @@
       transition: opacity 180ms ease, transform 180ms ease, background 180ms ease, border-color 180ms ease;
     }
 
+    #startOverlay {
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: linear-gradient(180deg, rgba(4,7,14,0.88) 0%, rgba(7,11,20,0.94) 100%);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      touch-action: manipulation;
+      cursor: pointer;
+      transition: opacity 220ms ease, visibility 220ms ease;
+    }
+    #startOverlay.is-hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    #startOverlayCard {
+      width: min(100%, 280px);
+      padding: 22px 18px;
+      border-radius: 22px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(17,24,42,0.76);
+      box-shadow: 0 18px 40px rgba(0,0,0,0.35);
+      text-align: center;
+    }
+    #startOverlayTitle {
+      margin: 0 0 10px;
+      font: 700 26px/1.1 Arial, Helvetica, sans-serif;
+      letter-spacing: 0.08em;
+      color: #fff6d0;
+    }
+    #startOverlayText {
+      margin: 0;
+      color: rgba(255,255,255,0.9);
+      font: 600 13px/1.5 Arial, Helvetica, sans-serif;
+      letter-spacing: 0.06em;
+    }
+    #startOverlaySubtext {
+      margin: 12px 0 0;
+      color: rgba(255,255,255,0.68);
+      font: 11px/1.5 Arial, Helvetica, sans-serif;
+      letter-spacing: 0.06em;
+    }
+
     #hint { bottom: 10px; }
     #audioBadge {
       top: 10px;
@@ -147,7 +195,15 @@
 <body>
   <div id="shell" aria-label="Kung Fu Brawler game container">
     <canvas id="game" width="360" height="640" aria-label="Kung Fu Brawler"></canvas>
-    <div id="audioBadge">AUDIO: LOCKED · TAP / CLICK / PRESS KEY</div>
+    <div id="startOverlay" role="button" tabindex="0" aria-label="Tap anywhere to start audio and begin the game">
+      <div id="startOverlayCard">
+        <h1 id="startOverlayTitle">TAP TO START</h1>
+        <p id="startOverlayText">Tap anywhere to unlock audio, start the music, and begin the fight.</p>
+        <p id="startOverlaySubtext">Required on iPhone Safari and Android Chrome.</p>
+      </div>
+    </div>
+    <audio id="audioUnlock" preload="auto" playsinline webkit-playsinline hidden aria-hidden="true"></audio>
+    <div id="audioBadge">AUDIO: LOCKED · TAP TO START</div>
     <button id="unmuteBtn" type="button">UNMUTE</button>
     <div id="hint">Move: ← → / A D · Jump: ↑ / W / Space · Punch: J · Kick: K / X · Parry: P / Shift</div>
   </div>
@@ -159,6 +215,8 @@
       const canvas = document.getElementById('game');
       const badge = document.getElementById('audioBadge');
       const unmuteBtn = document.getElementById('unmuteBtn');
+      const startOverlay = document.getElementById('startOverlay');
+      const audioUnlockEl = document.getElementById('audioUnlock');
       const ctx = canvas.getContext('2d');
       ctx.imageSmoothingEnabled = false;
 
@@ -678,6 +736,9 @@
         audioState: 'locked',
         audioBadgeTimer: 0,
         audioError: '',
+        startOverlayVisible: true,
+        startConfirmed: false,
+        htmlAudioUnlocked: false,
         timeScale: 1,
         timeScaleTimer: 0,
         freezeTimer: 0,
@@ -712,6 +773,15 @@
         game.timeScaleTimer = 0;
         game.freezeTimer = 0;
         game.audioError = '';
+        game.startOverlayVisible = true;
+        game.startConfirmed = false;
+      }
+
+      function setStartOverlay(visible) {
+        game.startOverlayVisible = visible;
+        if (!startOverlay) return;
+        startOverlay.classList.toggle('is-hidden', !visible);
+        startOverlay.setAttribute('aria-hidden', visible ? 'false' : 'true');
       }
 
       function updateUnmuteButton() {
@@ -738,6 +808,16 @@
         if (state === 'starting') badge.classList.add('is-starting');
         else if (state === 'live') badge.classList.add('is-live');
         else if (state === 'error') badge.classList.add('is-error');
+        if (startOverlay && game.startOverlayVisible && state !== 'live') {
+          const overlayText = startOverlay.querySelector('#startOverlayText');
+          const overlaySubtext = startOverlay.querySelector('#startOverlaySubtext');
+          if (overlayText) overlayText.textContent = state === 'error'
+            ? 'Audio needs a tap on this device. Tap anywhere to retry and start the fight.'
+            : 'Tap anywhere to unlock audio, start the music, and begin the fight.';
+          if (overlaySubtext) overlaySubtext.textContent = state === 'error'
+            ? text
+            : 'Required on iPhone Safari and Android Chrome.';
+        }
         updateUnmuteButton();
         if (autoHideMs > 0 && state === 'live' && game.audioUnlocked && !game.muted && !game.audioError) {
           window.clearTimeout(setAudioBadge.hideTimer);
@@ -757,6 +837,8 @@
           this.musicGain = null;
           this.sfxGain = null;
           this.started = false;
+          this.unlockAudioEl = null;
+          this.unlockAudioUrl = '';
           this.lookahead = CONFIG.audio.lookahead;
           this.nextTime = 0;
           this.step = 0;
@@ -777,6 +859,81 @@
             'A4',null,'E4',null,'D4',null,'E4',null,
             'A4',null,'E4',null,'D4',null,'C4',null
           ];
+        }
+        createUnlockToneDataUrl() {
+          const sampleRate = 8000;
+          const durationSeconds = 0.08;
+          const samples = Math.floor(sampleRate * durationSeconds);
+          const bytesPerSample = 2;
+          const blockAlign = bytesPerSample;
+          const buffer = new ArrayBuffer(44 + samples * bytesPerSample);
+          const view = new DataView(buffer);
+          const writeString = (offset, str) => {
+            for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+          };
+          writeString(0, 'RIFF');
+          view.setUint32(4, 36 + samples * bytesPerSample, true);
+          writeString(8, 'WAVE');
+          writeString(12, 'fmt ');
+          view.setUint32(16, 16, true);
+          view.setUint16(20, 1, true);
+          view.setUint16(22, 1, true);
+          view.setUint32(24, sampleRate, true);
+          view.setUint32(28, sampleRate * blockAlign, true);
+          view.setUint16(32, blockAlign, true);
+          view.setUint16(34, 16, true);
+          writeString(36, 'data');
+          view.setUint32(40, samples * bytesPerSample, true);
+          const freq = 880;
+          const attack = Math.floor(samples * 0.08);
+          const release = Math.floor(samples * 0.35);
+          for (let i = 0; i < samples; i++) {
+            const t = i / sampleRate;
+            let env = 1;
+            if (i < attack) env = i / Math.max(1, attack);
+            else if (i > samples - release) env = Math.max(0, (samples - i) / Math.max(1, release));
+            const sample = Math.sin(2 * Math.PI * freq * t) * env * 0.35;
+            view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, sample)) * 0x7fff, true);
+          }
+          let binary = '';
+          const bytes = new Uint8Array(buffer);
+          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+          return `data:audio/wav;base64,${btoa(binary)}`;
+        }
+        ensureUnlockAudio() {
+          if (!audioUnlockEl) return null;
+          if (!this.unlockAudioUrl) this.unlockAudioUrl = this.createUnlockToneDataUrl();
+          if (audioUnlockEl.src !== this.unlockAudioUrl) audioUnlockEl.src = this.unlockAudioUrl;
+          audioUnlockEl.muted = false;
+          audioUnlockEl.volume = 0.01;
+          audioUnlockEl.playsInline = true;
+          this.unlockAudioEl = audioUnlockEl;
+          return this.unlockAudioEl;
+        }
+        async unlockHtmlAudio() {
+          const el = this.ensureUnlockAudio();
+          if (!el) return false;
+          try {
+            el.currentTime = 0;
+          } catch (_) {}
+          try {
+            const playResult = el.play();
+            if (playResult && typeof playResult.then === 'function') await playResult;
+            const pauseAfterUnlock = () => {
+              try {
+                el.pause();
+                el.currentTime = 0;
+              } catch (_) {}
+            };
+            setTimeout(pauseAfterUnlock, 90);
+            game.htmlAudioUnlocked = true;
+            console.log('[KungFuBrawler audio] HTML5 audio unlock played successfully');
+            return true;
+          } catch (err) {
+            console.error('[KungFuBrawler audio] HTML5 audio unlock failed', err);
+            game.audioError = `HTML5 unlock failed: ${err?.message || err}`;
+            return false;
+          }
         }
         ensure() {
           if (this.ctx) return true;
@@ -2150,25 +2307,40 @@
         if (!game.musicStarted) setAudioBadge(`${audioBadgeText('starting')} · ${source}`, 'starting');
         else if (!game.audioUnlocked) setAudioBadge(`${audioBadgeText('resuming')} · ${source}`, 'starting');
         try {
+          const htmlUnlocked = await audio.unlockHtmlAudio();
+          console.log('[KungFuBrawler audio] HTML5 unlock result', { source, htmlUnlocked });
           const started = await audio.start();
           if (!started) {
             if (!game.audioError) game.audioError = 'Audio not running';
-            setAudioBadge(`${audioBadgeText(audio.ctx?.state || 'locked')} · tap/click/key`, game.audioError ? 'error' : 'locked');
+            setAudioBadge(`${audioBadgeText(audio.ctx?.state || 'locked')} · tap to retry`, game.audioError ? 'error' : 'locked');
             return false;
+          }
+          try {
+            audio.sfx('parryReady');
+          } catch (err) {
+            console.error('[KungFuBrawler audio] Test tone failed after unlock', err);
           }
           if (game.muted) {
             game.muted = false;
             audio.setMuted(false);
           }
           game.audioError = '';
+          game.startConfirmed = true;
+          setStartOverlay(false);
           const stateLabel = audio.ctx?.state || 'running';
           setAudioBadge(`${audioBadgeText(stateLabel)} · music on`, 'live', CONFIG.audio.badgeLiveHideMs);
-          console.log('[KungFuBrawler audio] audio started successfully', { source, state: stateLabel });
+          console.log('[KungFuBrawler audio] audio started successfully', {
+            source,
+            state: stateLabel,
+            htmlUnlocked,
+            ctxState: audio.ctx?.state || 'unknown'
+          });
           return true;
         } catch (err) {
           game.audioError = err?.message || 'Audio start failed';
           setAudioBadge(`${audioBadgeText('error')} · ${game.audioError}`, 'error');
           console.error('[KungFuBrawler audio] Audio start failed', err);
+          setStartOverlay(true);
           return false;
         }
       }
@@ -2184,6 +2356,7 @@
       function onPointerDown(e) {
         e.preventDefault();
         canvas.setPointerCapture?.(e.pointerId);
+        if (game.startOverlayVisible) return;
         primeAudio('pointer');
         const key = controlAt(e.clientX, e.clientY);
         if (key === 'restart') {
@@ -2221,6 +2394,12 @@
 
       window.addEventListener('keydown', async (e) => {
         if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code) || e.key === ' ') e.preventDefault();
+        if (game.startOverlayVisible) {
+          if (e.code === 'Enter' || e.code === 'Space' || e.key === ' ') {
+            await handleStartGesture('keyboard overlay');
+          }
+          return;
+        }
         keys[e.code] = true;
         await primeAudio('keyboard');
         if (e.code === 'KeyM') toggleMute();
@@ -2234,6 +2413,22 @@
       window.addEventListener('keyup', (e) => {
         keys[e.code] = false;
       });
+
+      async function handleStartGesture(source = 'overlay') {
+        console.log('[KungFuBrawler audio] start gesture received', {
+          source,
+          audioState: audio.ctx?.state || 'no-context',
+          overlayVisible: game.startOverlayVisible
+        });
+        if (!game.startOverlayVisible && game.startConfirmed) return true;
+        const ok = await primeAudio(source);
+        if (!ok) {
+          setStartOverlay(true);
+          return false;
+        }
+        setStartOverlay(false);
+        return true;
+      }
 
       function refreshViewportLayout() {
         updateSafeArea();
@@ -2249,6 +2444,23 @@
       canvas.addEventListener('pointerup', onPointerUp, { passive: false });
       canvas.addEventListener('pointercancel', onPointerUp, { passive: false });
       canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+      startOverlay?.addEventListener('pointerdown', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        await handleStartGesture('overlay pointer');
+      }, { passive: false });
+      startOverlay?.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        await handleStartGesture('overlay click');
+      }, { passive: false });
+      startOverlay?.addEventListener('keydown', async (e) => {
+        if (e.key === 'Enter' || e.key === ' ' || e.code === 'Space') {
+          e.preventDefault();
+          e.stopPropagation();
+          await handleStartGesture('overlay keyboard');
+        }
+      }, { passive: false });
       unmuteBtn?.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -2263,6 +2475,8 @@
       });
 
       resetGame();
+      setStartOverlay(true);
+      audio.ensureUnlockAudio?.();
       requestAnimationFrame(loop);
     })();
   </script>
